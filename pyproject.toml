@@ -9,6 +9,7 @@ dependencies = [
     "comfy-api-proxy>=0.1.6",
     "comfy-sdk>=0.5.0",
     "gradio>=6.30.0",
+    "imageio-ffmpeg>=0.6.0",
     "numpy>=2.5.4",
     "onnxruntime>=1.31.0",
     "python-dotenv>=1.2.4",
@@ -42,7 +43,7 @@ markers = [
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src", "tests"]
+files = ["src", "tests", "scripts"]
 mypy_path = "src"
 warn_redundant_casts = true
 warn_unused_ignores = true

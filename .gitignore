@@ -15,5 +15,20 @@ CLAUDE.md
 HANDOFF.md
 .claude
 
+# Secrets (.env.example is committed)
+.env
+
+# Model weights
+*.safetensors
+*.onnx
+*.pth
+*.ckpt
+
+# Video: only examples/ is committed
+*.mp4
+!examples/**
+
 # local
 local_fixtures/
+runs/
+reference/
