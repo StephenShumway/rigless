@@ -1,0 +1,71 @@
+[project]
+name = "rigless"
+version = "0.1.0"
+description = "Open-source motion transfer: a dance video plus a character sheet becomes that character performing the dance. Open-weights models on the Comfy Developer Platform."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = [
+    "comfy-api-proxy>=0.1.6",
+    "comfy-sdk>=0.5.0",
+    "gradio>=6.30.0",
+    "numpy>=2.5.4",
+    "onnxruntime>=1.31.0",
+    "python-dotenv>=1.2.4",
+    # rtmlib pulls in OpenCV itself; don't add a second OpenCV package.
+    "rtmlib>=0.0.16",
+]
+
+[project.scripts]
+rigless = "rigless.app:main"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.0",
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# -ra: summarize every non-passing outcome. --strict-markers: an unregistered
+# marker is a typo, fail it. --strict-config: same for an unknown ini key.
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+markers = [
+    "comfy: needs a running ComfyUI and comfy-api-proxy. Deselect with -m 'not comfy'.",
+    "fixtures: needs the local test videos in local_fixtures/. Skips when they're missing.",
+]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "tests"]
+mypy_path = "src"
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.ruff]
+target-version = "py312"
+src = ["src"]
+
+[tool.ruff.lint]
+# A focused set on top of the E/W/F baseline: I (import order), B (real bugs),
+# SIM + RET (flatten and guard-clause conditionals), and D (Google docstrings).
+select = ["E", "W", "F", "I", "B", "SIM", "RET", "D"]
+ignore = [
+    # Rules the formatter owns.
+    "E111", "E114", "E117", "W191", "D206", "D300",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]        # tests are self-documenting; skip docstring rules
+"__init__.py" = ["D104"]  # package inits need no docstring
