@@ -12,6 +12,10 @@
 
 ### Added
 
+- RunPod deployment: `deploy/runpod/setup.sh` installs ComfyUI, the models, and
+  comfy-api-proxy on a pod's volume; `deploy/runpod/start.sh` starts ComfyUI (pod-local
+  only) behind the token-protected proxy.
+
 - Motion-accuracy scoring: CPU pose estimation (RTMPose + YOLOX via rtmlib, ONNX Runtime)
   and a 0-100 score from limb angles, with a per-frame curve, frozen-take and mirroring
   flags, and time-based frame matching across frame rates.
