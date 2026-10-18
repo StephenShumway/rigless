@@ -1,0 +1,7 @@
+# 24GB GPU such as an RTX 4090. Unverified: confirm with a test render before relying on it.
+# Keys are rigless.workflow.Settings fields; anything not set keeps the workflow's value.
+width = 720
+height = 1280
+model = "wan_animate_2_int8_convrot.safetensors"
+cache_device = "gpu"
+context_windows = false

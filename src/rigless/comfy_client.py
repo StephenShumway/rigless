@@ -66,4 +66,7 @@ def download(job: Job, destinations: Mapping[str, Path]) -> None:
         outputs = job.get_outputs(node_id)
         if not outputs:
             raise RuntimeError(f"Job {job.id}: node {node_id} produced no output.")
+        # Unless the frame count is 4n + 1, the template's final rebatch leaves a
+        # few surplus frames that ComfyUI saves as a second, tiny clip. The full
+        # clip comes first.
         outputs[0].to_file(dest)

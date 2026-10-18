@@ -1,4 +1,5 @@
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import cv2
@@ -7,71 +8,79 @@ import pytest
 
 from rigless import video_prep
 
-FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
+MakeVideo = Callable[..., Path]
 
 
-def _make_video(path: Path, width: int, height: int, seconds: float) -> None:
-    """Writes a 30fps test pattern with a sine-tone audio track."""
-    subprocess.run(
-        [
-            FFMPEG,
-            "-v",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            f"testsrc=size={width}x{height}:rate=30:duration={seconds}",
-            "-f",
-            "lavfi",
-            "-i",
-            f"sine=duration={seconds}",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            str(path),
-        ],
-        check=True,
-    )
-
-
-def _has_audio(path: Path) -> bool:
-    probe = subprocess.run([FFMPEG, "-i", str(path)], capture_output=True, text=True)
-    return "Audio:" in probe.stderr
+def _size(path: Path) -> tuple[float, float]:
+    video = cv2.VideoCapture(str(path))
+    return video.get(cv2.CAP_PROP_FRAME_WIDTH), video.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
 
 @pytest.mark.parametrize(("width", "height"), [(1080, 1920), (1920, 1080)])
 def test_prepared_video_just_covers_output_size(
-    tmp_path: Path, width: int, height: int
+    make_video: MakeVideo, tmp_path: Path, width: int, height: int
 ) -> None:
-    src, dest = tmp_path / "src.mp4", tmp_path / "dest.mp4"
-    _make_video(src, width, height, seconds=1)
+    dest = tmp_path / "dest.mp4"
 
-    video_prep.prepare(src, dest, width=482, height=854)
+    video_prep.prepare(make_video(width, height), dest, width=482, height=854)
 
-    video = cv2.VideoCapture(str(dest))
-    out_w = video.get(cv2.CAP_PROP_FRAME_WIDTH)
-    out_h = video.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    out_w, out_h = _size(dest)
     assert out_w >= 482 and out_h >= 854
     assert out_w <= 484 or out_h <= 856
     assert out_w / out_h == pytest.approx(width / height, rel=0.01)
 
 
-def test_prepared_video_keeps_audio(tmp_path: Path) -> None:
-    src, dest = tmp_path / "src.mp4", tmp_path / "dest.mp4"
-    _make_video(src, 1080, 1920, seconds=1)
+def test_prepared_video_keeps_audio(make_video: MakeVideo, tmp_path: Path) -> None:
+    dest = tmp_path / "dest.mp4"
 
-    video_prep.prepare(src, dest, width=482, height=854)
+    video_prep.prepare(make_video(1080, 1920), dest, width=482, height=854)
 
-    assert _has_audio(dest)
+    probe = subprocess.run(
+        [imageio_ffmpeg.get_ffmpeg_exe(), "-i", str(dest)],
+        capture_output=True,
+        text=True,
+    )
+    assert "Audio:" in probe.stderr
 
 
-def test_seconds_keeps_only_the_start(tmp_path: Path) -> None:
-    src, dest = tmp_path / "src.mp4", tmp_path / "dest.mp4"
-    _make_video(src, 640, 360, seconds=2)
+def test_seconds_keeps_only_the_start(make_video: MakeVideo, tmp_path: Path) -> None:
+    dest = tmp_path / "dest.mp4"
 
-    video_prep.prepare(src, dest, width=482, height=854, seconds=1)
+    video_prep.prepare(
+        make_video(640, 360, seconds=2), dest, width=482, height=854, seconds=1
+    )
 
-    assert cv2.VideoCapture(str(dest)).get(cv2.CAP_PROP_FRAME_COUNT) == 30
+    assert video_prep.probe(dest).frames == 30
+
+
+def test_black_bars_are_found(make_video: MakeVideo) -> None:
+    pillarboxed = make_video(608, 1080, pad_to=(1920, 1080))
+
+    assert video_prep.detect_crop(pillarboxed) == (608, 1080, 656, 0)
+
+
+def test_no_crop_without_black_bars(make_video: MakeVideo) -> None:
+    assert video_prep.detect_crop(make_video(1080, 1920)) is None
+
+
+def test_crop_is_applied_before_scaling(make_video: MakeVideo, tmp_path: Path) -> None:
+    dest = tmp_path / "dest.mp4"
+
+    video_prep.prepare(
+        make_video(608, 1080, pad_to=(1920, 1080)),
+        dest,
+        width=482,
+        height=854,
+        crop=(608, 1080, 656, 0),
+    )
+
+    out_w, out_h = _size(dest)
+    assert out_w / out_h == pytest.approx(608 / 1080, rel=0.01)
+
+
+def test_probe_rejects_a_file_that_is_not_a_video(tmp_path: Path) -> None:
+    fake = tmp_path / "dance.mp4"
+    fake.write_text("not a video")
+
+    with pytest.raises(ValueError, match="readable video"):
+        video_prep.probe(fake)

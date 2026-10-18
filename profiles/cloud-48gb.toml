@@ -1,0 +1,7 @@
+# 48GB GPU such as an L40S or RTX 6000. Unverified: confirm with a test render before relying on it.
+# Keys are rigless.workflow.Settings fields; anything not set keeps the workflow's value.
+width = 720
+height = 1280
+model = "wan_animate_2_bf16.safetensors"  # full precision; download with --bf16
+cache_device = "gpu"
+context_windows = false

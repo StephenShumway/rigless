@@ -32,3 +32,9 @@ HANDOFF.md
 local_fixtures/
 runs/
 reference/
+EXPERIMENTS.md
+
+# Caches
+.mypy_cache
+.pytest_cache
+.ruff_cache
