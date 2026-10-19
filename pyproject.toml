@@ -12,6 +12,7 @@ dependencies = [
     "imageio-ffmpeg>=0.6.0",
     "numpy>=2.5.4",
     "onnxruntime>=1.31.0",
+    "pillow>=12.3.0",
     "python-dotenv>=1.2.4",
     # rtmlib pulls in OpenCV itself; don't add a second OpenCV package.
     "rtmlib>=0.0.16",

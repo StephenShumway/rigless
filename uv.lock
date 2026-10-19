@@ -2088,6 +2088,7 @@ dependencies = [
     { name = "imageio-ffmpeg" },
     { name = "numpy" },
     { name = "onnxruntime" },
+    { name = "pillow" },
     { name = "python-dotenv" },
     { name = "rtmlib" },
 ]
@@ -2107,6 +2108,7 @@ requires-dist = [
     { name = "imageio-ffmpeg", specifier = ">=0.6.0" },
     { name = "numpy", specifier = ">=2.5.4" },
     { name = "onnxruntime", specifier = ">=1.31.0" },
+    { name = "pillow", specifier = ">=12.3.0" },
     { name = "python-dotenv", specifier = ">=1.2.4" },
     { name = "rtmlib", specifier = ">=0.0.16" },
 ]

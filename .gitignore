@@ -24,8 +24,12 @@ HANDOFF.md
 *.pth
 *.ckpt
 
-# Video: only examples/ is committed
-*.mp4
+# Video: only examples/ is committed. Bracketed patterns match either case on any OS
+# (phones write .MOV and .MP4).
+*.[mM][pP]4
+*.[mM][oO][vV]
+*.[mM]4[vV]
+*.[wW][eE][bB][mM]
 !examples/**
 
 # local

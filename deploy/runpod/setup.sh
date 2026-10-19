@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# One-time setup of a RunPod pod for rigless: ComfyUI, the Wan Animate 2 models,
-# and comfy-api-proxy, all under /workspace so they survive pod stops. Safe to
-# rerun: finished steps are skipped, interrupted downloads resume.
+# One-time setup of a RunPod pod for rigless: ComfyUI, the Wan Animate 2 and
+# Qwen-Image-Edit models, and comfy-api-proxy, all under /workspace so they survive
+# pod stops. Safe to rerun: finished steps are skipped, interrupted downloads resume.
 #
 # Usage, on the pod from a checkout of this repo:
 #   bash deploy/runpod/setup.sh
@@ -26,5 +26,5 @@ fi
 [ -d "$VENV" ] || uv venv --python 3.12 "$VENV"
 uv pip install --python "$VENV/bin/python" torch torchvision torchaudio --index-url "$TORCH_INDEX"
 uv pip install --python "$VENV/bin/python" -r "$COMFY/requirements.txt" comfy-api-proxy==0.1.6
-"$VENV/bin/python" "$REPO/scripts/download_models.py" --models-dir "$COMFY/models" --bf16
+"$VENV/bin/python" "$REPO/scripts/download_models.py" --models-dir "$COMFY/models" --bf16 --qwen-edit
 bash "$REPO/deploy/runpod/start.sh"

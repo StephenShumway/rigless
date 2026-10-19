@@ -77,6 +77,28 @@ def estimate(video: Path) -> PoseTrack:
     return PoseTrack(np.stack(keypoints), np.stack(scores), fps)
 
 
+def face_keypoints(image: np.ndarray) -> np.ndarray:
+    """Finds the main person's face keypoints in a still image.
+
+    Args:
+        image: An HxWx3 RGB image.
+
+    Returns:
+        A (5, 2) array of positions in pixels: nose, left eye, right eye, left
+        ear, right ear (COCO order; "left" is the person's own left).
+
+    Raises:
+        ValueError: The image shows no person.
+    """
+    model = _model()
+    frame = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    box = _largest_person(model, frame)
+    if box is None:
+        raise ValueError("No person found in the image.")
+    found, _ = model.pose_model(frame, bboxes=[box])
+    return found[0][:5]
+
+
 @cache
 def _model() -> Body:
     """Loads the detector and pose model once per process."""

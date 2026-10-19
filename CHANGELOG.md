@@ -12,6 +12,22 @@
 
 ### Added
 
+- Reference composition for real backgrounds: Qwen-Image-Edit 2511 edits the character
+  into a background photo with the scene's lighting, since Wan Animate 2 keeps its
+  reference image's background. `workflows/rigless_compose_reference_api.json` is
+  ComfyUI's int8 template flattened, with inputs for the background, the character's
+  full-body view, and an optional face close-up; `rigless.compose` fits the photo to the
+  output's aspect (leaving a band for the floor so the character fits head to shoes) and
+  patches the workflow; `scripts/compose.py` makes one reference per seed, with `--full`
+  for slower sampling without the Lightning LoRA, whose glossy look the video inherits.
+- Face-detail pass for composed references (`scripts/detail_face.py`): in a full-body
+  shot the face is too small for details such as a monocle, so the head is cut out,
+  upscaled, re-edited with the sheet's face close-up, aligned back by face keypoints
+  (`compose.similarity_transform`), and blended over the inner face only
+  (`compose.blend_face`). `pose.face_keypoints` finds the face in a still image.
+- `download_models.py --qwen-edit` fetches the Qwen-Image-Edit 2511 models (int8, which
+  pre-Ada GPUs run natively, unlike FP8); RunPod setup includes them.
+
 - RunPod deployment: `deploy/runpod/setup.sh` installs ComfyUI, the models, and
   comfy-api-proxy on a pod's volume; `deploy/runpod/start.sh` starts ComfyUI (pod-local
   only) behind the token-protected proxy.
