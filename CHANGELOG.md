@@ -12,6 +12,12 @@
 
 ### Added
 
+- Character sheet splitting (`rigless.sheet`, `scripts/sheet.py`): finds every figure
+  with the pose estimator's person detector, separates it from the plain backdrop by
+  color, and picks the front full-body view, the most frontal face close-up, and the back
+  view by their keypoints, cropped with a margin of the sheet's backdrop. Warns when the
+  front view's hands rest on the body, the pose frozen takes fell back to.
+  `pose.find_people` returns every person in a still image.
 - Reference composition for real backgrounds: Qwen-Image-Edit 2511 edits the character
   into a background photo with the scene's lighting, since Wan Animate 2 keeps its
   reference image's background. `workflows/rigless_compose_reference_api.json` is

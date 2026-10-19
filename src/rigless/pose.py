@@ -41,6 +41,21 @@ class PoseTrack:
     fps: float
 
 
+@dataclass(frozen=True)
+class Person:
+    """One person found in a still image.
+
+    Attributes:
+        box: The detector's (x1, y1, x2, y2) box in pixels; it can be loose.
+        keypoints: (17, 2) COCO keypoint positions in pixels.
+        scores: (17,) keypoint confidences.
+    """
+
+    box: np.ndarray
+    keypoints: np.ndarray
+    scores: np.ndarray
+
+
 def estimate(video: Path) -> PoseTrack:
     """Finds the main person's body keypoints in every frame of a video.
 
@@ -97,6 +112,21 @@ def face_keypoints(image: np.ndarray) -> np.ndarray:
         raise ValueError("No person found in the image.")
     found, _ = model.pose_model(frame, bboxes=[box])
     return found[0][:5]
+
+
+def find_people(image: np.ndarray) -> list[Person]:
+    """Finds every person in a still image, with their body keypoints.
+
+    Args:
+        image: An HxWx3 RGB image.
+    """
+    model = _model()
+    frame = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    boxes = model.det_model(frame)
+    if len(boxes) == 0:
+        return []
+    keypoints, scores = model.pose_model(frame, bboxes=list(boxes))
+    return [Person(*found) for found in zip(boxes, keypoints, scores, strict=True)]
 
 
 @cache
