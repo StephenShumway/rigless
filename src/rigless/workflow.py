@@ -53,8 +53,8 @@ class Settings:
         cache_device: Where the pose-branch cache lives: "cpu" or "gpu".
         width: Output width in pixels.
         height: Output height in pixels.
-        sampler: The sampling method, such as "lcm" (for the LightX2V LoRA)
-            or "euler" (for the distilled model).
+        sampler: The sampling method, such as "euler" (for the distilled
+            model) or "lcm" (for the LightX2V LoRA).
         realism_lora_strength: Strength of the real-footage LoRA, trained on
             phone videos; at 2.0 it adds camera-like motion blur and flatter
             light. 0 leaves it out, for ComfyUI installs without its file and
@@ -75,7 +75,7 @@ class Settings:
     cache_device: str
     width: int
     height: int
-    sampler: str = "lcm"
+    sampler: str = "euler"
     realism_lora_strength: float = 0.0
 
     def __post_init__(self) -> None:
@@ -130,19 +130,21 @@ def plan_chunks(frames: int, fragment_length: int) -> list[Chunk]:
     return [*chunks, Chunk(full * step, 4 * math.ceil(rest / 4) + 1)]
 
 
-def distilled(settings: Settings) -> Settings:
-    """Returns the settings switched to Wan Animate 2's distilled model.
+def standard(settings: Settings) -> Settings:
+    """Returns the settings switched from the distilled model to the base model.
 
-    Its makers run it for 10 Euler steps without guidance, so the LightX2V
-    speed LoRA, made for the base model, is turned off. The model file keeps
-    the same precision as the one in settings.
+    The workflow defaults to Wan Animate 2's distilled model (10 Euler steps,
+    no speed LoRA). The base model runs instead with the LightX2V speed LoRA
+    for 6 LCM steps: about 1.5x as fast, and it follows the dance slightly
+    more closely, but looks less like real footage. The model file keeps the
+    same precision as the one in settings.
     """
     return replace(
         settings,
-        model=settings.model.replace("wan_animate_2_", "wan_animate_2_distill_", 1),
-        steps=10,
-        lora_strength=0.0,
-        sampler="euler",
+        model=settings.model.replace("wan_animate_2_distill_", "wan_animate_2_", 1),
+        steps=6,
+        lora_strength=1.0,
+        sampler="lcm",
     )
 
 

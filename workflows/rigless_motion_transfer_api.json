@@ -36,7 +36,7 @@
   },
   "672:578": {
     "inputs": {
-      "unet_name": "wan_animate_2_int8_convrot.safetensors",
+      "unet_name": "wan_animate_2_distill_int8_convrot.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -47,7 +47,7 @@
   "672:579": {
     "inputs": {
       "lora_name": "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
-      "strength_model": 1,
+      "strength_model": 0,
       "model": [
         "672:578",
         0
@@ -491,7 +491,7 @@
   "672:591": {
     "inputs": {
       "scheduler": "simple",
-      "steps": 6,
+      "steps": 10,
       "denoise": 1,
       "model": [
         "672:594",
@@ -518,7 +518,7 @@
   },
   "672:593": {
     "inputs": {
-      "sampler_name": "lcm"
+      "sampler_name": "euler"
     },
     "class_type": "KSamplerSelect",
     "_meta": {

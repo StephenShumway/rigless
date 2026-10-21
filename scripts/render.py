@@ -94,11 +94,12 @@ def parse_args() -> argparse.Namespace:
     )
     settings.add_argument("--context-windows", action=argparse.BooleanOptionalAction)
     settings.add_argument("--model", help="file in ComfyUI's diffusion_models folder")
-    settings.add_argument("--sampler", help='e.g. "lcm" (LightX2V) or "euler"')
+    settings.add_argument("--sampler", help='e.g. "euler" or "lcm" (LightX2V)')
     settings.add_argument(
-        "--distilled",
+        "--standard",
         action="store_true",
-        help="Wan Animate 2's distilled model: 10 euler steps, no LightX2V",
+        help="Wan Animate 2's base model instead of the distilled one: "
+        "6 lcm steps with LightX2V",
     )
     settings.add_argument("--cache-device", choices=["cpu", "gpu"])
     settings.add_argument("--width", type=int)
@@ -125,8 +126,8 @@ def main() -> None:
         **config.load_profile(args.profile),
         **from_file,
     )
-    if args.distilled:
-        settings = workflow.distilled(settings)
+    if args.standard:
+        settings = workflow.standard(settings)
     settings = replace(settings, **overrides)
 
     takes = args.takes if args.takes is not None else len(args.seeds) or 3

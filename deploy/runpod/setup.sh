@@ -28,5 +28,5 @@ fi
 uv pip install --python "$VENV/bin/python" torch torchvision torchaudio --index-url "$TORCH_INDEX"
 uv pip install --python "$VENV/bin/python" -r "$COMFY/requirements.txt" comfy-api-proxy==0.1.6
 "$VENV/bin/python" "$REPO/scripts/download_models.py" --models-dir "$COMFY/models" \
-  --bf16 --qwen-edit --qwen-image-21
+  --standard --qwen-edit --qwen-image-21
 bash "$REPO/deploy/runpod/start.sh"

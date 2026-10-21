@@ -2,8 +2,8 @@
 # Keys are rigless.workflow.Settings fields; anything not set keeps the workflow's value.
 width = 720
 height = 1280
-# int8 runs natively on the A40 (fp8 is emulated there). The bf16 model
-# (download_models.py --bf16) is untested with this profile.
-model = "wan_animate_2_int8_convrot.safetensors"
+# int8 runs natively on the A40 (fp8 is emulated there), and bf16 gave nearly
+# identical frames (Oct 20).
+model = "wan_animate_2_distill_int8_convrot.safetensors"
 cache_device = "gpu"
 context_windows = false

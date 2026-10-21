@@ -1,6 +1,7 @@
 """Downloads the model files rigless needs into a ComfyUI models folder.
 
-The Wan Animate 2 set comes from Comfy-Org/Wan-Animate-2 on Hugging Face. The
+The Wan Animate 2 set comes from Comfy-Org/Wan-Animate-2 on Hugging Face: the
+distilled model by default, and the base model for render.py --standard. The
 optional editors compose the character into a background photo: Qwen-Image 2.1
 (Comfy-Org/Qwen-Image-2.1; its license allows research and evaluation only) and
 Qwen-Image-Edit 2511 (Comfy-Org's Qwen-Image repositories and lightx2v's Lightning
@@ -10,7 +11,7 @@ resumes.
 Typical usage example:
 
   uv run python scripts/download_models.py --models-dir C:/path/to/ComfyUI/models
-  uv run python scripts/download_models.py --check --bf16 --qwen-image-21
+  uv run python scripts/download_models.py --check --standard --qwen-image-21
 """
 
 import argparse
@@ -30,7 +31,7 @@ QWEN21 = "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main"
 # Each model is (download URL, subfolder of ComfyUI's models folder).
 REQUIRED = [
     (
-        f"{WAN}/diffusion_models/wan_animate_2_int8_convrot.safetensors",
+        f"{WAN}/diffusion_models/wan_animate_2_distill_int8_convrot.safetensors",
         "diffusion_models",
     ),
     (
@@ -41,7 +42,18 @@ REQUIRED = [
     (f"{WAN}/clip_vision/clip_vision_h.safetensors", "clip_vision"),
     (f"{WAN}/vae/Wan2_1_VAE_bf16.safetensors", "vae"),
 ]
-BF16 = [(f"{WAN}/diffusion_models/wan_animate_2_bf16.safetensors", "diffusion_models")]
+STANDARD = [
+    (
+        f"{WAN}/diffusion_models/wan_animate_2_int8_convrot.safetensors",
+        "diffusion_models",
+    )
+]
+BF16 = [
+    (
+        f"{WAN}/diffusion_models/wan_animate_2_distill_bf16.safetensors",
+        "diffusion_models",
+    )
+]
 # int8, not the template's default fp8mixed: GPUs before Ada (e.g., the A40) have no
 # FP8 compute, while comfy-kitchen runs int8 natively.
 QWEN_EDIT_SET = [
@@ -75,7 +87,14 @@ def parse_args() -> argparse.Namespace:
     target.add_argument("--models-dir", type=Path, help="ComfyUI's models folder")
     target.add_argument("--check", action="store_true", help="only check every link")
     parser.add_argument(
-        "--bf16", action="store_true", help="also get the 33GB bf16 model (cloud-48gb)"
+        "--standard",
+        action="store_true",
+        help="also get the base model, for render.py --standard",
+    )
+    parser.add_argument(
+        "--bf16",
+        action="store_true",
+        help="also get the 33GB bf16 distilled model (no visible gain over int8)",
     )
     parser.add_argument(
         "--qwen-edit",
@@ -123,7 +142,8 @@ def download(url: str, dest: Path) -> None:
 def main() -> None:
     """Checks or downloads every model the chosen settings need."""
     args = parse_args()
-    models = REQUIRED + (BF16 if args.bf16 else [])
+    models = REQUIRED + (STANDARD if args.standard else [])
+    models += BF16 if args.bf16 else []
     models += QWEN_EDIT_SET if args.qwen_edit else []
     models += QWEN21_SET if args.qwen_image_21 else []
     for url, folder in models:

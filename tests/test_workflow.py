@@ -28,10 +28,11 @@ def test_read_settings_finds_each_setting(template: workflow.Graph) -> None:
     assert settings.positive_prompt.startswith("Character Description:")
     assert settings.pose_prompt.startswith("A girl doing energetic street dance")
     assert (settings.pose_start_percent, settings.pose_end_percent) == (0, 1.0)
-    assert (settings.steps, settings.fragment_length) == (6, 81)
+    assert (settings.steps, settings.fragment_length) == (10, 81)
     assert (settings.context_windows, settings.cache_device) == (False, "cpu")
     assert (settings.width, settings.height) == (482, 854)
-    assert settings.model == "wan_animate_2_int8_convrot.safetensors"
+    assert settings.model == "wan_animate_2_distill_int8_convrot.safetensors"
+    assert (settings.sampler, settings.lora_strength) == ("euler", 0)
     assert settings.realism_lora_strength == 2.0
 
 
@@ -249,22 +250,24 @@ def test_chunk_graph_keeps_uploaded_assets_as_they_are(
 
 
 @pytest.mark.parametrize(
-    ("model", "distilled_model"),
+    ("model", "base_model"),
     [
         (
-            "wan_animate_2_int8_convrot.safetensors",
             "wan_animate_2_distill_int8_convrot.safetensors",
+            "wan_animate_2_int8_convrot.safetensors",
         ),
-        ("wan_animate_2_bf16.safetensors", "wan_animate_2_distill_bf16.safetensors"),
+        ("wan_animate_2_distill_bf16.safetensors", "wan_animate_2_bf16.safetensors"),
     ],
 )
-def test_distilled_recipe_keeps_the_precision_and_reaches_the_graph(
-    template: workflow.Graph, model: str, distilled_model: str
+def test_standard_recipe_keeps_the_precision_and_reaches_the_graph(
+    template: workflow.Graph, model: str, base_model: str
 ) -> None:
     settings = replace(workflow.read_settings(template), model=model)
 
-    graph = _patch(template, workflow.distilled(settings))
+    graph = _patch(template, workflow.standard(settings))
 
-    assert _inputs(graph, "UNETLoader")["unet_name"] == distilled_model
-    assert _inputs(graph, "KSamplerSelect")["sampler_name"] == "euler"
-    assert _inputs(graph, "BasicScheduler")["steps"] == 10
+    assert _inputs(graph, "UNETLoader")["unet_name"] == base_model
+    assert _inputs(graph, "KSamplerSelect")["sampler_name"] == "lcm"
+    assert _inputs(graph, "BasicScheduler")["steps"] == 6
+    speed_lora = workflow.find_node(graph, "LoraLoaderModelOnly", title="Load LoRA")
+    assert graph[speed_lora]["inputs"]["strength_model"] == 1.0

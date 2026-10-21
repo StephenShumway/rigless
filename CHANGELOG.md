@@ -4,6 +4,12 @@
 
 ### Changed
 
+- Wan Animate 2's distilled model is the default, run as its makers do: 10 Euler steps
+  with the LightX2V LoRA off. On the full 13.9s test it scores 90.4 against the base
+  model's 93.9 and takes ~1.5x as long, but keeps finer detail and looks more like real
+  footage. The base model's recipe (6 LCM steps with LightX2V) is `render.py --standard`
+  (`workflow.standard`), and `download_models.py --standard` fetches its file;
+  `--bf16` now fetches the bf16 distilled model.
 - The motion-transfer workflow no longer saves a side-by-side comparison video. It held
   a second full-length copy of every frame and ran a 48GB pod out of memory on a 14s
   clip.
@@ -24,11 +30,7 @@
 
 ### Added
 
-- The distilled model as an option (`workflow.distilled`, `render.py --distilled`): Wan
-  Animate 2's distilled file of the same precision, run as its makers do, 10 Euler steps
-  with the LightX2V LoRA off. New setting `sampler` (`render.py --sampler`). On the
-  full 13.9s test it scores 90.4 against the base model's 93.9 and takes ~1.5x as long,
-  but keeps finer detail and looks more natural.
+- New setting `sampler` (`render.py --sampler`), the sampling method.
 - Composing references in one call (`pipeline.compose_references`), with a generic
   instruction built from the character description (`compose.prompt`) that matched the
   hand-tuned prompt's quality; `sheet.extract` returns all the sheet's views at once.
