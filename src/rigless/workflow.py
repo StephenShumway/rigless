@@ -1,10 +1,11 @@
 """Loading and patching the API-format Wan Animate 2 workflow.
 
-The workflow JSON in `workflows/` is a template and the single source of
-default settings: `read_settings` reads them out, and `patch` writes a take's
-settings, inputs, and seed back into a copy. Nodes are found by class type,
-title, and their links into WanAnimate2ToVideo, never by node id, so a fresh
-export from ComfyUI keeps working.
+The workflow JSON in `workflows/` is a template and the source of default
+settings: `read_settings` reads them out, and `patch` writes a take's settings,
+inputs, and seed back into a copy. The one setting the template can't hold,
+when the real-footage LoRA comes in, `patch` builds into the copy. Nodes are
+found by class type, title, and their links into WanAnimate2ToVideo, never by
+node id, so a fresh export from ComfyUI keeps working.
 
 Typical usage example:
 
@@ -27,14 +28,21 @@ Graph = dict[str, dict[str, Any]]
 REALISM_LORA = (
     "Real-footage LoRA"  # node title of the optional LoRA trained on phone clips
 )
-# Node ids that chunk_graph adds.
-CONTINUE_FROM = "rigless_continue_from"
-LAST_FRAME = "rigless_last_frame"
+# Nodes that patch and chunk_graph add have ids starting with ADDED, which
+# find_node passes over, so lookups keep finding the template's own nodes.
+ADDED = "rigless_"
+CONTINUE_FROM = f"{ADDED}continue_from"
+LAST_FRAME = f"{ADDED}last_frame"
+LORA_SPLIT = f"{ADDED}lora_split"
+EARLY_SAMPLER = f"{ADDED}early_sampler"
 
 
 @dataclass(frozen=True)
 class Settings:
-    """Generation settings for a take; each one is a single workflow input.
+    """Generation settings for a take.
+
+    Each one is a single workflow input, except realism_lora_start_percent,
+    which patch builds into the graph.
 
     Attributes:
         positive_prompt: "Character Description: ..." and, on a new line,
@@ -59,6 +67,12 @@ class Settings:
             phone videos; at 2.0 it adds camera-like motion blur and flatter
             light. 0 leaves it out, for ComfyUI installs without its file and
             for workflows without the node.
+        realism_lora_start_percent: Fraction of sampling at which the
+            real-footage LoRA comes in; the steps before run without it. Those
+            early steps settle shapes, such as a small accessory or the
+            hairline, which the LoRA redraws on the distilled model (Oct 21: a
+            monocle became glasses); the later ones settle texture and tone.
+            0 uses it throughout.
     """
 
     positive_prompt: str
@@ -77,13 +91,14 @@ class Settings:
     height: int
     sampler: str = "euler"
     realism_lora_strength: float = 0.0
+    realism_lora_start_percent: float = 0.7
 
     def __post_init__(self) -> None:
         """Rejects settings the workflow can't run.
 
         Raises:
-            ValueError: fragment_length is not 4n + 1, or the pose window
-                starts after it ends.
+            ValueError: fragment_length is not 4n + 1, the pose window starts
+                after it ends, or realism_lora_start_percent is outside [0, 1).
         """
         length = self.fragment_length
         if length % 4 != 1:
@@ -92,6 +107,8 @@ class Settings:
             )
         if self.pose_start_percent > self.pose_end_percent:
             raise ValueError("pose_start_percent must not exceed pose_end_percent.")
+        if not 0 <= self.realism_lora_start_percent < 1:
+            raise ValueError("realism_lora_start_percent must be in [0, 1).")
 
 
 @dataclass(frozen=True)
@@ -136,8 +153,9 @@ def standard(settings: Settings) -> Settings:
     The workflow defaults to Wan Animate 2's distilled model (10 Euler steps,
     no speed LoRA). The base model runs instead with the LightX2V speed LoRA
     for 6 LCM steps: about 1.5x as fast, and it follows the dance slightly
-    more closely, but looks less like real footage. The model file keeps the
-    same precision as the one in settings.
+    more closely, but looks less like real footage. The real-footage LoRA runs
+    on every step, as it was tuned on this model. The model file keeps the same
+    precision as the one in settings.
     """
     return replace(
         settings,
@@ -145,6 +163,7 @@ def standard(settings: Settings) -> Settings:
         steps=6,
         lora_strength=1.0,
         sampler="lcm",
+        realism_lora_start_percent=0.0,
     )
 
 
@@ -168,6 +187,8 @@ def load(path: Path) -> Graph:
 def find_node(graph: Graph, class_type: str, title: str | None = None) -> str:
     """Returns the id of the only node of class_type, with title if given.
 
+    Nodes that patch and chunk_graph added are passed over.
+
     Raises:
         ValueError: The graph has no such node, or more than one.
     """
@@ -176,6 +197,7 @@ def find_node(graph: Graph, class_type: str, title: str | None = None) -> str:
         for nid, node in graph.items()
         if node["class_type"] == class_type
         and (title is None or node.get("_meta", {}).get("title") == title)
+        and not nid.startswith(ADDED)
     ]
     if len(ids) != 1:
         name = f"{class_type} {title!r}" if title else class_type
@@ -240,6 +262,9 @@ def patch(
     patched[find_node(patched, "LoadVideo")]["inputs"]["file"] = video
     patched[find_node(patched, "LoadImage")]["inputs"]["image"] = image
     patched[find_node(patched, "SamplerCustom")]["inputs"]["noise_seed"] = seed
+    start = round(settings.realism_lora_start_percent * settings.steps)
+    if realism is not None and settings.realism_lora_strength and start:
+        _split_sampling(patched, realism, start)
     for nid, role in video_outputs(patched).items():
         patched[nid]["inputs"]["filename_prefix"] = f"rigless/{role}"
     return patched
@@ -284,7 +309,7 @@ def chunk_graph(graph: Graph, chunk: Chunk, continue_from: str | Asset | None) -
     create = chunked[_source(chunked, result, "video")]["inputs"]
     create["images"] = decoded
     create.pop("audio", None)
-    chunked["rigless_pick_last"] = _node(
+    chunked[f"{ADDED}pick_last"] = _node(
         "ImageFromBatch",
         "Last frame",
         image=decoded,
@@ -292,7 +317,7 @@ def chunk_graph(graph: Graph, chunk: Chunk, continue_from: str | Asset | None) -
         length=1,
     )
     chunked[LAST_FRAME] = _node(
-        "SaveImage", "Save last frame", images=["rigless_pick_last", 0],
+        "SaveImage", "Save last frame", images=[f"{ADDED}pick_last", 0],
         filename_prefix="rigless/last",
     )  # fmt: skip
     return _upstream_of_outputs(chunked)
@@ -366,6 +391,61 @@ def _realism_lora(graph: Graph) -> str | None:
     return ids[0] if ids else None
 
 
+def _split_sampling(graph: Graph, lora: str, step: int) -> None:
+    """Runs the sampler's steps before step on the model without the lora node.
+
+    The model chain between the LoRA and the sampler (context windows, pose
+    cache, shift) is copied for the early pass, which hands its partly
+    denoised latent to the original sampler for the remaining steps. With a
+    sampler that adds no noise between steps, such as euler, the split itself
+    changes nothing.
+    """
+    late = graph[find_node(graph, "SamplerCustom")]["inputs"]
+    graph[LORA_SPLIT] = _node(
+        "SplitSigmas", "Real-footage LoRA from step", sigmas=late["sigmas"], step=step
+    )
+    graph[EARLY_SAMPLER] = _node(
+        "SamplerCustom",
+        "SamplerCustom (before the real-footage LoRA)",
+        **{
+            **late,
+            "model": _copy_without(graph, late["model"], lora, {}),
+            "sigmas": [LORA_SPLIT, 0],
+        },
+    )
+    late.update(
+        add_noise=False, sigmas=[LORA_SPLIT, 1], latent_image=[EARLY_SAMPLER, 0]
+    )
+
+
+def _copy_without(
+    graph: Graph, link: list[Any], skipped: str, copies: dict[str, str]
+) -> list[Any]:
+    """Returns a link to a copy of link's source with a model-only node bypassed.
+
+    Only the nodes between skipped and the source are copied, each once (copies
+    maps original ids to their copies); everything else is shared.
+    """
+    source, output = link
+    if source == skipped:
+        return list(graph[skipped]["inputs"]["model"])
+    if skipped not in _upstream(graph, source):
+        return link
+    if source not in copies:
+        copies[source] = f"{ADDED}early_{source}"
+        node = graph[source]
+        graph[copies[source]] = {
+            **node,
+            "inputs": {
+                name: _copy_without(graph, value, skipped, copies)
+                if _is_link(value)
+                else value
+                for name, value in node["inputs"].items()
+            },
+        }
+    return [copies[source], output]
+
+
 def _bypass(graph: Graph, node_id: str) -> None:
     """Removes a model-only node, linking its consumers to its own input."""
     source = graph.pop(node_id)["inputs"]["model"]
@@ -383,18 +463,22 @@ def _source(graph: Graph, node_id: str, input_name: str) -> str:
 
 def _fed_by(graph: Graph, node_id: str, class_type: str) -> bool:
     """Whether any node upstream of node_id is of class_type."""
+    return any(
+        graph[nid]["class_type"] == class_type for nid in _upstream(graph, node_id)
+    )
+
+
+def _upstream(graph: Graph, node_id: str) -> set[str]:
+    """Returns the ids of node_id and every node it depends on."""
     stack, seen = [node_id], set()
     while stack:
         nid = stack.pop()
-        if nid in seen:
-            continue
-        seen.add(nid)
-        if graph[nid]["class_type"] == class_type:
-            return True
-        stack.extend(
-            value[0] for value in graph[nid]["inputs"].values() if _is_link(value)
-        )
-    return False
+        if nid not in seen:
+            seen.add(nid)
+            stack.extend(
+                value[0] for value in graph[nid]["inputs"].values() if _is_link(value)
+            )
+    return seen
 
 
 def _is_link(value: object) -> bool:

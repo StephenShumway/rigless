@@ -252,10 +252,14 @@ def render_takes(
             render_seconds = round(time.monotonic() - started, 1)
             take_score = None
             if not error:
-                take_score = score_take(
-                    driving.dancer, pose.estimate(take_dir / "result.mp4")
+                output = pose.estimate(take_dir / "result.mp4")
+                take_score = score_take(driving.dancer, output)
+                video_prep.finish(
+                    take_dir / "result.mp4",
+                    take_dir / "finished.mp4",
+                    output,
+                    settings.fragment_length,
                 )
-                video_prep.finish(take_dir / "result.mp4", take_dir / "finished.mp4")
             record = {
                 **shared,
                 "seed": seed,
@@ -379,8 +383,14 @@ def render_chunked(
             frames=frames,
             audio=driving.video,
         )
-        take_score = score_take(driving.dancer, pose.estimate(take_dir / "result.mp4"))
-        video_prep.finish(take_dir / "result.mp4", take_dir / "finished.mp4")
+        output = pose.estimate(take_dir / "result.mp4")
+        take_score = score_take(driving.dancer, output)
+        video_prep.finish(
+            take_dir / "result.mp4",
+            take_dir / "finished.mp4",
+            output,
+            settings.fragment_length,
+        )
     seed = kept[0].seed if kept else seeds[0]
     record = {
         **_shared_record(workflow_path, settings, driving, image),

@@ -4,6 +4,15 @@
 
 ### Changed
 
+- The real-footage LoRA joins at 70% of sampling on the distilled model, for the last 3
+  of 10 steps (new setting `realism_lora_start_percent`, `render.py
+  --realism-lora-start-percent`). On every step it redrew small details and the
+  hairline: in Oct 21 tests on two seeds, the character's hair grew a quiff and his
+  monocle turned into round glasses after a fast bend. The early steps, which settle
+  shapes such as the hairline, now run without it: the hair holds and most of its look
+  remains, though small accessories can still change later in a take. The base model's
+  recipe (`--standard`), which the LoRA was tuned on, keeps it on every step.
+
 - Wan Animate 2's distilled model is the default, run as its makers do: 10 Euler steps
   with the LightX2V LoRA off. On the full 13.9s test it scores 90.4 against the base
   model's 93.9 and takes ~1.5x as long, but keeps finer detail and looks more like real
@@ -18,6 +27,12 @@
 
 ### Fixed
 
+- Long takes no longer drift in color from chunk to chunk. Wan redraws the static
+  background slightly differently in each chunk, with a color step at every seam that
+  added up to about 6 levels of green by the end of a 14s take. The camera finish now
+  holds each frame's colors to the first chunk's, measured on the background away from
+  the dancer (`video_prep.steady_colors`), which also softens every seam (on the 14s
+  distilled take, 5.7 to 3.4 at the first and 1.6-2.2 to 1.2-1.5 at the others).
 - RunPod: ComfyUI starts with `--disable-pinned-memory`. It sizes its RAM caches from
   the host's memory, not the pod's limit, so pinned model copies piled up until the
   container was killed mid-render.

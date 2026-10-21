@@ -108,6 +108,67 @@ def test_zero_realism_strength_leaves_the_lora_out(template: workflow.Graph) -> 
     assert all(source in graph for source in links)
 
 
+def _samplers(graph: workflow.Graph) -> list[str]:
+    return [nid for nid, node in graph.items() if node["class_type"] == "SamplerCustom"]
+
+
+def _uses_realism_lora(graph: workflow.Graph, sampler: str) -> bool:
+    stack, seen = [graph[sampler]["inputs"]["model"][0]], set()
+    while stack:
+        nid = stack.pop()
+        if nid in seen:
+            continue
+        seen.add(nid)
+        if graph[nid].get("_meta", {}).get("title") == workflow.REALISM_LORA:
+            return True
+        stack.extend(
+            value[0] for value in graph[nid]["inputs"].values() if _is_link(value)
+        )
+    return False
+
+
+def _is_link(value: object) -> bool:
+    return isinstance(value, list) and len(value) == 2 and isinstance(value[0], str)
+
+
+def test_realism_lora_comes_in_at_its_start_step(template: workflow.Graph) -> None:
+    settings = replace(
+        workflow.read_settings(template), steps=10, realism_lora_start_percent=0.7
+    )
+
+    graph = _patch(template, settings)
+
+    late = workflow.find_node(graph, "SamplerCustom")
+    [early] = [nid for nid in _samplers(graph) if nid != late]
+    [split, _] = graph[early]["inputs"]["sigmas"]
+    assert graph[split]["inputs"]["step"] == 7
+    assert graph[late]["inputs"]["sigmas"] == [split, 1]
+    assert not _uses_realism_lora(graph, early)
+    assert _uses_realism_lora(graph, late)
+    # The late steps go on from the early ones' latent, without fresh noise.
+    assert graph[late]["inputs"]["latent_image"] == [early, 0]
+    assert graph[late]["inputs"]["add_noise"] is False
+
+
+def test_realism_lora_from_the_start_needs_one_sampler(
+    template: workflow.Graph,
+) -> None:
+    settings = replace(workflow.read_settings(template), realism_lora_start_percent=0)
+
+    graph = _patch(template, settings)
+
+    [sampler] = _samplers(graph)
+    assert _uses_realism_lora(graph, sampler)
+
+
+@pytest.mark.parametrize("start", [-0.1, 1.0])
+def test_realism_lora_start_must_leave_it_some_steps(
+    template: workflow.Graph, start: float
+) -> None:
+    with pytest.raises(ValueError, match="realism_lora_start_percent"):
+        replace(workflow.read_settings(template), realism_lora_start_percent=start)
+
+
 def test_export_without_realism_lora_reads_zero_and_rejects_it() -> None:
     export = workflow.load(
         config.REPO_ROOT / "workflows" / "wan_animate2_motion_transfer_api.json"
@@ -271,3 +332,5 @@ def test_standard_recipe_keeps_the_precision_and_reaches_the_graph(
     assert _inputs(graph, "BasicScheduler")["steps"] == 6
     speed_lora = workflow.find_node(graph, "LoraLoaderModelOnly", title="Load LoRA")
     assert graph[speed_lora]["inputs"]["strength_model"] == 1.0
+    [sampler] = _samplers(graph)  # the real-footage LoRA on every step
+    assert _uses_realism_lora(graph, sampler)

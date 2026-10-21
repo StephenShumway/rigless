@@ -90,6 +90,11 @@ def parse_args() -> argparse.Namespace:
         "--realism-lora-strength", type=float, help="real-footage LoRA; 0 leaves it out"
     )
     settings.add_argument(
+        "--realism-lora-start-percent",
+        type=float,
+        help="fraction of sampling before the real-footage LoRA joins; 0 = all steps",
+    )
+    settings.add_argument(
         "--fragment-length", type=int, help="frames per chunk, 4n + 1"
     )
     settings.add_argument("--context-windows", action=argparse.BooleanOptionalAction)

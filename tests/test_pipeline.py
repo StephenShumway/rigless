@@ -53,7 +53,7 @@ def test_failed_take_is_recorded_and_sweep_continues(
     monkeypatch.setattr(comfy_client, "run", _fake_run)
     monkeypatch.setattr(comfy_client, "download", _fake_download)
     monkeypatch.setattr(pose, "estimate", _fake_estimate)
-    monkeypatch.setattr(video_prep, "finish", lambda src, dest: None)
+    monkeypatch.setattr(video_prep, "finish", lambda src, dest, *steady: None)
     settings = workflow.read_settings(workflow.load(config.WORKFLOW_PATH))
     driving = pipeline.prepare_driving(
         make_video(1080, 1920), pipeline.new_run_dir(), settings
@@ -119,7 +119,7 @@ def fake_comfy(monkeypatch: pytest.MonkeyPatch) -> list[workflow.Graph]:
     monkeypatch.setattr(comfy_client, "run", run)
     monkeypatch.setattr(comfy_client, "download", _fake_download)
     monkeypatch.setattr(pose, "estimate", estimate)
-    monkeypatch.setattr(video_prep, "finish", lambda src, dest: None)
+    monkeypatch.setattr(video_prep, "finish", lambda src, dest, *steady: None)
     return graphs
 
 
