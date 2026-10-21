@@ -141,6 +141,38 @@ def test_crop_paints_out_a_neighbor_in_the_margin() -> None:
     assert (pixels == (200, 0, 0)).all(axis=2).sum() == red.sum()
 
 
+def test_cutout_is_transparent_off_the_figure() -> None:
+    image = np.full((100, 100, 3), 180, np.uint8)
+    ys, xs = np.mgrid[:100, :100]
+    disk = (ys - 50) ** 2 + (xs - 50) ** 2 < 40**2
+    image[disk] = (200, 0, 0)
+    view = View((11, 11, 90, 90), disk, STANDING, np.ones(17))
+
+    cut = sheet.cutout(Image.fromarray(image), view)
+    pasted = Image.new("RGB", cut.size, (0, 0, 200))
+    pasted.paste(cut, (0, 0), cut)
+
+    assert pasted.getpixel((0, 0)) == (0, 0, 200)  # a corner of the box, off the disk
+    assert pasted.getpixel((39, 39)) == (200, 0, 0)
+
+
+def test_cutout_fills_small_holes_but_keeps_real_gaps() -> None:
+    image = np.full((120, 80, 3), 180, np.uint8)
+    figure = np.zeros((120, 80), bool)
+    figure[10:110, 10:70] = True
+    figure[30:36, 30:36] = False  # a patch of shirt as gray as the backdrop
+    figure[50:90, 20:40] = False  # the gap between an arm and the body
+    image[figure] = (200, 0, 0)
+    view = View((10, 10, 70, 110), figure, STANDING, np.ones(17))
+
+    cut = sheet.cutout(Image.fromarray(image), view)
+    pasted = Image.new("RGB", cut.size, (0, 0, 200))
+    pasted.paste(cut, (0, 0), cut)
+
+    assert pasted.getpixel((22, 22)) == (180, 180, 180)  # kept, opaque
+    assert pasted.getpixel((20, 60)) == (0, 0, 200)  # see-through
+
+
 def _inside(box: sheet.Box, outer: sheet.Box, tolerance: int = 4) -> bool:
     return (
         box[0] >= outer[0] - tolerance

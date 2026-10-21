@@ -23,7 +23,7 @@ from pathlib import Path
 
 from comfy_sdk import Progress
 
-from rigless import config, pipeline, video_prep, workflow
+from rigless import config, pipeline, workflow
 from rigless.workflow import Settings
 
 
@@ -49,6 +49,17 @@ def parse_args() -> argparse.Namespace:
         "(default: one per --seeds value, or 3)",
     )
     parser.add_argument("--seconds", type=float, help="render only the first N seconds")
+    parser.add_argument(
+        "--chunked",
+        action="store_true",
+        help="render one take chunk by chunk, keeping each chunk's best seed",
+    )
+    parser.add_argument(
+        "--reframe",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="frame the dancer in the output (default: on)",
+    )
     parser.add_argument("--profile", default=config.PROFILE, help="preset in profiles/")
     parser.add_argument(
         "--settings", type=Path, help="TOML file of settings, e.g. prompts"
@@ -76,10 +87,19 @@ def parse_args() -> argparse.Namespace:
     settings.add_argument("--steps", type=int)
     settings.add_argument("--lora-strength", type=float)
     settings.add_argument(
+        "--realism-lora-strength", type=float, help="real-footage LoRA; 0 leaves it out"
+    )
+    settings.add_argument(
         "--fragment-length", type=int, help="frames per chunk, 4n + 1"
     )
     settings.add_argument("--context-windows", action=argparse.BooleanOptionalAction)
     settings.add_argument("--model", help="file in ComfyUI's diffusion_models folder")
+    settings.add_argument("--sampler", help='e.g. "lcm" (LightX2V) or "euler"')
+    settings.add_argument(
+        "--distilled",
+        action="store_true",
+        help="Wan Animate 2's distilled model: 10 euler steps, no LightX2V",
+    )
     settings.add_argument("--cache-device", choices=["cpu", "gpu"])
     settings.add_argument("--width", type=int)
     settings.add_argument("--height", type=int)
@@ -102,26 +122,38 @@ def main() -> None:
     template = workflow.load(args.workflow)
     settings = replace(
         workflow.read_settings(template),
-        **{**config.load_profile(args.profile), **from_file, **overrides},
+        **config.load_profile(args.profile),
+        **from_file,
     )
+    if args.distilled:
+        settings = workflow.distilled(settings)
+    settings = replace(settings, **overrides)
 
     takes = args.takes if args.takes is not None else len(args.seeds) or 3
     seeds = args.seeds + [
         random.randrange(2**53) for _ in range(takes - len(args.seeds))
     ]
 
-    info = video_prep.probe(args.video)
-    length = min(info.duration, args.seconds) if args.seconds else info.duration
-    if warning := video_prep.length_warning(length):
+    driving = pipeline.prepare_driving(
+        args.video,
+        pipeline.new_run_dir(),
+        settings,
+        seconds=args.seconds,
+        reframe=args.reframe,
+    )
+    for warning in driving.warnings:
         print(f"Warning: {warning}")
+    length = len(driving.dancer.keypoints) / driving.dancer.fps
     print(
         f"Rendering {len(seeds)} take(s) of {length:.1f}s at "
-        f"{settings.width}x{settings.height} (profile {args.profile})"
+        f"{settings.width}x{settings.height} from the source's "
+        f"{driving.window[0]}x{driving.window[1]} at {driving.window[2:]} "
+        f"(profile {args.profile})"
     )
 
     started = time.monotonic()
 
-    def show_progress(index: int, progress: Progress) -> None:
+    def show_progress(index: int, progress: Progress, chunk: str = "") -> None:
         elapsed = int(time.monotonic() - started)
         doing = (
             f"step {progress.step}/{progress.steps}"
@@ -129,20 +161,33 @@ def main() -> None:
             else "working"
         )
         print(
-            f"\r[take {index + 1}/{len(seeds)}, {elapsed // 60}m{elapsed % 60:02d}s] "
-            f"{doing}    ",
+            f"\r[{chunk}seed {index + 1}/{len(seeds)}, "
+            f"{elapsed // 60}m{elapsed % 60:02d}s] {doing}    ",
             end="",
             flush=True,
         )
+
+    if args.chunked:
+        take = pipeline.render_chunked(
+            args.workflow,
+            settings,
+            driving=driving,
+            image=args.image,
+            seeds=seeds,
+            on_progress=lambda chunk, index, progress: show_progress(
+                index, progress, f"chunk {chunk + 1}, "
+            ),
+        )
+        print(f"\nChunked take: {describe(take)} ({take.dir})")
+        return
 
     takes = []
     for take in pipeline.render_takes(
         args.workflow,
         settings,
-        video=args.video,
+        driving=driving,
         image=args.image,
         seeds=seeds,
-        seconds=args.seconds,
         on_progress=show_progress,
     ):
         takes.append(take)

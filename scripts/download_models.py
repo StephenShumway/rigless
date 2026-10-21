@@ -1,14 +1,16 @@
 """Downloads the model files rigless needs into a ComfyUI models folder.
 
 The Wan Animate 2 set comes from Comfy-Org/Wan-Animate-2 on Hugging Face. The
-optional Qwen-Image-Edit 2511 set, which composes the character into a background
-photo, comes from Comfy-Org's Qwen-Image repositories and lightx2v's Lightning
-LoRA. Files already present are skipped, and an interrupted download resumes.
+optional editors compose the character into a background photo: Qwen-Image 2.1
+(Comfy-Org/Qwen-Image-2.1; its license allows research and evaluation only) and
+Qwen-Image-Edit 2511 (Comfy-Org's Qwen-Image repositories and lightx2v's Lightning
+LoRA; Apache-2.0). Files already present are skipped, and an interrupted download
+resumes.
 
 Typical usage example:
 
   uv run python scripts/download_models.py --models-dir C:/path/to/ComfyUI/models
-  uv run python scripts/download_models.py --check --bf16 --qwen-edit
+  uv run python scripts/download_models.py --check --bf16 --qwen-image-21
 """
 
 import argparse
@@ -23,6 +25,7 @@ QWEN_EDIT = (
 LIGHTNING = (
     "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning/resolve/main"
 )
+QWEN21 = "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main"
 
 # Each model is (download URL, subfolder of ComfyUI's models folder).
 REQUIRED = [
@@ -53,6 +56,16 @@ QWEN_EDIT_SET = [
         "loras",
     ),
 ]
+# The template's optional prompt rewriter (another 9GB model) is left out: our prompts
+# are already written out in full.
+QWEN21_SET = [
+    (
+        f"{QWEN21}/diffusion_models/qwen_image_2.1_int8_convrot.safetensors",
+        "diffusion_models",
+    ),
+    (f"{QWEN21}/text_encoders/qwen3vl_8b_int8_convrot.safetensors", "text_encoders"),
+    (f"{QWEN21}/vae/qwen_image_2.1_vae_bf16.safetensors", "vae"),
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,6 +81,11 @@ def parse_args() -> argparse.Namespace:
         "--qwen-edit",
         action="store_true",
         help="also get Qwen-Image-Edit 2511 (31GB), for background photos",
+    )
+    parser.add_argument(
+        "--qwen-image-21",
+        action="store_true",
+        help="also get Qwen-Image 2.1 (17GB; research license), for background photos",
     )
     return parser.parse_args()
 
@@ -107,6 +125,7 @@ def main() -> None:
     args = parse_args()
     models = REQUIRED + (BF16 if args.bf16 else [])
     models += QWEN_EDIT_SET if args.qwen_edit else []
+    models += QWEN21_SET if args.qwen_image_21 else []
     for url, folder in models:
         if args.check:
             check(url)

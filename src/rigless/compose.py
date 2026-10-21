@@ -2,8 +2,9 @@
 
 Wan Animate 2 carries its one reference image's background into the video, so to
 show the character in a real place, the reference must already show them there.
-Qwen-Image-Edit 2511 does the edit and matches the scene's lighting, which a plain
-paste can't. Its workflow takes the background as Picture 1 (which also sets the
+An image editor does the edit and matches the scene's lighting, which a plain paste
+can't: Qwen-Image 2.1 (best identity, research license) or Qwen-Image-Edit 2511
+(Apache-2.0). Both workflows take the background as Picture 1 (which also sets the
 output canvas), the character's full-body view as Picture 2, and an optional face
 close-up as Picture 3; the prompt refers to them by those names.
 
@@ -11,6 +12,10 @@ In a full-body shot the face is small, so details such as a monocle come out
 wrong. The face-detail pass fixes them: cut the head out with `face_box`, upscale
 it, re-edit it with the same workflow (the crop as Picture 1, the sheet's face
 close-up as Picture 2), and put the result back with `blend_face`.
+
+Redrawing the whole character drifts from the sheet (fabric pattern, colors, the
+face), so there is a lighter alternative: `paste` the sheet's own cut-out into the
+scene and run the edit with denoise below 1, which only relights it.
 
 Typical usage example:
 
@@ -64,59 +69,140 @@ def fit_background(photo: Image.Image, width: int, height: int) -> Image.Image:
     return canvas
 
 
+def fit_figure(figure: Image.Image, width: int, height: int) -> Image.Image:
+    """Pads a view of the character to the output's aspect ratio.
+
+    For renders without a background photo: the view keeps its plain backdrop,
+    extended with the color of its border, so the whole figure stays in frame.
+
+    Args:
+        figure: A view cut from the character sheet.
+        width: The output video's width; only the ratio to height matters.
+        height: The output video's height.
+
+    Returns:
+        A new RGB image with the output's aspect ratio, to within a pixel.
+    """
+    figure = figure.convert("RGB")
+    w, h = figure.size
+    if w / h < width / height:
+        size = (round(h * width / height), h)
+    else:
+        size = (w, round(w * height / width))
+    pixels = np.asarray(figure)
+    border = np.concatenate([pixels[0], pixels[-1], pixels[:, 0], pixels[:, -1]])
+    color = tuple(int(c) for c in np.median(border, axis=0))
+    canvas = Image.new("RGB", size, color)
+    canvas.paste(figure, ((size[0] - w) // 2, (size[1] - h) // 2))
+    return canvas
+
+
+def prompt(description: str, close_up: bool) -> str:
+    """Writes the edit instruction that puts a character into a background photo.
+
+    Args:
+        description: What the character looks like, in a sentence or two.
+        close_up: Whether a face close-up is given as Picture 3.
+    """
+    face = "The face is the one in Picture 3. " if close_up else ""
+    return (
+        "Place the character from Picture 2 into the scene in Picture 1, standing "
+        "on the floor near the middle of the frame, facing the camera with the "
+        f"arms relaxed at the sides. {face}Keep the character exactly as in "
+        f"Picture 2: {description.strip().rstrip('.')}. Match the lighting, "
+        "shadows, and colors of Picture 1 so the character looks photographed "
+        "there. Keep the scene unchanged. Show the full body from head to feet. "
+        "Fill any plain band at the bottom of Picture 1 with the floor, "
+        "continuing it naturally. A candid photo taken on a phone camera: natural "
+        "skin texture, natural fabric texture, soft natural light, no retouching."
+    )
+
+
 def patch(
     graph: Graph,
     *,
     background: str | Asset,
-    character: str | Asset,
+    character: str | Asset | None,
     close_up: str | Asset | None,
     prompt: str,
     seed: int,
     full_sampling: bool = False,
+    denoise: float = 1.0,
 ) -> Graph:
-    """Returns a copy of the compose workflow set up for one image.
+    """Returns a copy of a compose workflow set up for one image.
 
     Args:
-        graph: The workflow template. It is not modified.
+        graph: The Qwen-Image 2.1 or Qwen-Image-Edit 2511 workflow template. It
+            is not modified.
         background: The fitted background photo (Picture 1).
-        character: The character's full-body front view (Picture 2).
+        character: The character's full-body front view (Picture 2), or None
+            to leave Pictures 2 and 3 out, for edits of the background alone.
         close_up: A close-up of the character's face (Picture 3), or None to
             leave Picture 3 out.
         prompt: The edit instruction, naming the inputs Picture 1 to 3.
         seed: The sampler's noise seed.
-        full_sampling: Sample without the 4-step Lightning LoRA, at 40 steps and
-            cfg 4 (the template's defaults). About 20x slower, but softer and
-            more photographic, a look the video then inherits.
+        full_sampling: 2511 only. Sample without the 4-step Lightning LoRA, at
+            40 steps and cfg 4 (the template's defaults). About 20x slower, but
+            softer and more photographic, a look the video then inherits.
+        denoise: 2511 only. How much of Picture 1 to redraw, from 0 to 1. Below
+            1 the edit starts from Picture 1 itself, so its details largely
+            survive: a light touch, e.g., to relight a pasted character.
     """
     patched = copy.deepcopy(graph)
     background_id = find_node(patched, "LoadImage", "Background")
-    character_id = find_node(patched, "LoadImage", "Character")
-    close_up_id = find_node(patched, "LoadImage", "Character close-up")
     patched[background_id]["inputs"]["image"] = background
-    patched[character_id]["inputs"]["image"] = character
-    if close_up is None:
-        del patched[close_up_id]
-        for node in patched.values():
-            node["inputs"] = {
-                name: value
-                for name, value in node["inputs"].items()
-                if value != [close_up_id, 0]
-            }
+    if character is None:
+        close_up = None
+    for title, image in (("Character", character), ("Character close-up", close_up)):
+        node_id = find_node(patched, "LoadImage", title)
+        if image is None:
+            _remove(patched, node_id)
+        else:
+            patched[node_id]["inputs"]["image"] = image
+    if any(node["class_type"] == "TextEncodeQwenImage21" for node in patched.values()):
+        positive = find_node(patched, "TextEncodeQwenImage21")
     else:
-        patched[close_up_id]["inputs"]["image"] = close_up
-    positive = find_node(
-        patched,
-        "TextEncodeQwenImageEditPlus",
-        "TextEncodeQwenImageEditPlus (Positive)",
-    )
+        positive = find_node(
+            patched,
+            "TextEncodeQwenImageEditPlus",
+            "TextEncodeQwenImageEditPlus (Positive)",
+        )
     patched[positive]["inputs"]["prompt"] = prompt
     sampler = patched[find_node(patched, "KSampler")]["inputs"]
     sampler["seed"] = seed
+    sampler["denoise"] = denoise
     if full_sampling:
         sampler["steps"], sampler["cfg"] = 40, 4
         lora = find_node(patched, "LoraLoaderModelOnly")
         patched[lora]["inputs"]["strength_model"] = 0
     return patched
+
+
+def paste(
+    background: Image.Image,
+    figure: Image.Image,
+    *,
+    height: float,
+    center: float,
+    feet: float,
+) -> Image.Image:
+    """Returns the background with a cut-out figure standing in it.
+
+    Args:
+        background: The scene.
+        figure: The figure as an RGBA cut-out, cropped to its outline.
+        height: The figure's height as a fraction of the background's.
+        center: Where the figure's middle goes, as a fraction of the width.
+        feet: Where its soles go, as a fraction of the height from the top.
+    """
+    scale = height * background.height / figure.height
+    size = (round(figure.width * scale), round(figure.height * scale))
+    figure = figure.resize(size, Image.Resampling.LANCZOS)
+    left = round(center * background.width - size[0] / 2)
+    top = round(feet * background.height) - size[1]
+    result = background.convert("RGB")
+    result.paste(figure, (left, top), figure)
+    return result
 
 
 def face_box(points: np.ndarray, image_size: tuple[int, int]) -> Box:
@@ -203,6 +289,17 @@ def blend_face(
         _match_colors(aligned, crop, np.asarray(mask) > 128), (left, top), mask
     )
     return result
+
+
+def _remove(graph: Graph, node_id: str) -> None:
+    """Deletes a node and every input linked to it."""
+    del graph[node_id]
+    for node in graph.values():
+        node["inputs"] = {
+            name: value
+            for name, value in node["inputs"].items()
+            if value != [node_id, 0]
+        }
 
 
 def _face_oval(points: np.ndarray, size: tuple[int, int]) -> Image.Image:

@@ -89,6 +89,66 @@ def test_without_close_up_no_link_is_left_dangling(template: workflow.Graph) -> 
     assert "image3" not in graph[_positive_encoder(graph)]["inputs"]
 
 
+@pytest.fixture
+def qwen21() -> workflow.Graph:
+    return workflow.load(config.COMPOSE_QWEN21_WORKFLOW_PATH)
+
+
+def test_qwen21_gets_the_pictures_in_order_and_the_prompt(
+    qwen21: workflow.Graph,
+) -> None:
+    graph = _patch(qwen21)
+
+    encoder = workflow.find_node(graph, "TextEncodeQwenImage21")
+    pictures = [_upstream(graph, encoder, f"images.image_{i}") for i in (1, 2, 3)]
+    assert pictures == ["lobby.png", "hero.png", "face.png"]
+    assert graph[encoder]["inputs"]["prompt"] == "put him in the lobby"
+
+
+def test_qwen21_without_close_up_leaves_no_dangling_link(
+    qwen21: workflow.Graph,
+) -> None:
+    graph = _patch(qwen21, close_up=None)
+
+    encoder = graph[workflow.find_node(graph, "TextEncodeQwenImage21")]["inputs"]
+    assert "images.image_3" not in encoder
+    assert all(
+        value[0] in graph
+        for node in graph.values()
+        for value in node["inputs"].values()
+        if isinstance(value, list)
+    )
+
+
+def test_without_character_only_the_background_is_pictured(
+    template: workflow.Graph,
+) -> None:
+    graph = compose.patch(
+        template,
+        background="lobby.png",
+        character=None,
+        close_up="face.png",
+        prompt="remove the man",
+        seed=7,
+    )
+
+    encoder = graph[_positive_encoder(graph)]["inputs"]
+    assert "image2" not in encoder and "image3" not in encoder
+    assert _upstream(graph, _positive_encoder(graph), "image1") == "lobby.png"
+
+
+def test_pasted_figure_stands_at_the_given_place_and_size() -> None:
+    background = Image.new("RGB", (400, 800), BLUE)
+    figure = Image.new("RGBA", (50, 100), RED + (255,))
+
+    result = compose.paste(background, figure, height=0.5, center=0.4, feet=0.9)
+
+    red = np.all(np.asarray(result) == RED, axis=2)
+    ys, xs = np.nonzero(red)
+    assert (ys.min(), ys.max() + 1) == (320, 720)
+    assert (xs.min(), xs.max() + 1) == (60, 260)
+
+
 def test_wide_photo_keeps_its_height_and_gains_a_floor_band() -> None:
     photo = Image.new("RGB", (600, 900), RED)
     photo.paste(BLUE, (0, 880, 600, 900))

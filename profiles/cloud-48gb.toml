@@ -1,7 +1,9 @@
-# 48GB GPU such as an L40S or RTX 6000. Unverified: confirm with a test render before relying on it.
+# 48GB GPU such as an A40, L40S, or RTX 6000. Verified on an A40 (Oct 19-20) at 720p.
 # Keys are rigless.workflow.Settings fields; anything not set keeps the workflow's value.
 width = 720
 height = 1280
-model = "wan_animate_2_bf16.safetensors"  # full precision; download with --bf16
+# int8 runs natively on the A40 (fp8 is emulated there). The bf16 model
+# (download_models.py --bf16) is untested with this profile.
+model = "wan_animate_2_int8_convrot.safetensors"
 cache_device = "gpu"
 context_windows = false

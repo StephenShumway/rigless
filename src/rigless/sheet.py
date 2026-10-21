@@ -65,6 +65,48 @@ class View:
         return bool(self.scores[[LEFT_ANKLE, RIGHT_ANKLE]].min() > FOUND)
 
 
+@dataclass(frozen=True)
+class Views:
+    """The views of a character the pipeline uses, cut out of its images.
+
+    Attributes:
+        front: The full-body view that faces the camera most squarely.
+        close_up: The most frontal face close-up, or None if there is none.
+        back: The full-body view from behind, or None if there is none.
+        warning: Advice about the front view's pose, or None.
+    """
+
+    front: Image.Image
+    close_up: Image.Image | None
+    back: Image.Image | None
+    warning: str | None
+
+
+def extract(images: list[Image.Image]) -> Views:
+    """Picks and cuts out the views, pooled across a sheet or several images.
+
+    Raises:
+        ValueError: No image shows the character's whole body.
+    """
+    found = [(image, find_views(image)) for image in images]
+    owners = {id(view): (image, views) for image, views in found for view in views}
+    pooled = [view for _, views in found for view in views]
+
+    def cut(view: View | None) -> Image.Image | None:
+        if view is None:
+            return None
+        image, views = owners[id(view)]
+        return crop(image, views, view)
+
+    front = pick_front(pooled)
+    return Views(
+        crop(*owners[id(front)], front),
+        cut(pick_close_up(pooled)),
+        cut(pick_back(pooled)),
+        pose_warning(front),
+    )
+
+
 def find_views(sheet: Image.Image) -> list[View]:
     """Finds every figure on a character sheet, on the CPU.
 
@@ -233,6 +275,42 @@ def crop(sheet: Image.Image, views: list[View], view: View) -> Image.Image:
             min(bottom + pad, height),
         )
     )
+
+
+def cutout(sheet: Image.Image, view: View) -> Image.Image:
+    """Cuts one view out of the sheet as RGBA, transparent off the figure.
+
+    Parts of the figure as gray as the backdrop, such as a white shirt in
+    shadow, slip through the color threshold as thin seams and small holes; they
+    are closed and filled. The edge is then pulled in by a pixel and softened,
+    so no backdrop fringe shows when the figure is pasted onto a new background.
+    """
+    closed = cv2.morphologyEx(
+        view.mask.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8)
+    )
+    # Real gaps, such as between an arm and the torso, are larger.
+    mask = _fill_holes(closed, max_area=0.01 * int(closed.sum()))
+    alpha = cv2.erode(mask * 255, np.ones((3, 3), np.uint8))
+    image = sheet.convert("RGBA")
+    image.putalpha(Image.fromarray(cv2.GaussianBlur(alpha, (0, 0), 0.8)))
+    return image.crop(view.box)
+
+
+def _fill_holes(mask: np.ndarray, max_area: float) -> np.ndarray:
+    """Fills a 0/1 mask's enclosed holes that are smaller than max_area pixels."""
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(1 - mask, connectivity=4)
+    height, width = mask.shape
+    small = [
+        label
+        for label, (x, y, w, h, area) in enumerate(stats)
+        if label > 0
+        and x > 0
+        and y > 0
+        and x + w < width
+        and y + h < height
+        and area < max_area
+    ]
+    return mask | np.isin(labels, small).astype(np.uint8)
 
 
 def _backdrop(image: np.ndarray) -> np.ndarray:

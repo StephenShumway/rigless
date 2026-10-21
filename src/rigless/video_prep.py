@@ -12,6 +12,7 @@ Typical usage example:
 
 import re
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -142,6 +143,68 @@ def prepare(
         "-v", "error", "-y", "-i", str(src), *trim, "-vf", ",".join(filters),
         "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac",
         str(dest),
+    )  # fmt: skip
+
+
+def finish(src: Path, dest: Path) -> None:
+    """Writes a copy of a rendered take that looks more like phone footage.
+
+    Fast-moving parts get motion blur along their own motion, like a camera
+    shutter (frames are interpolated by optical flow to 4x the rate, averaged in
+    threes, and brought back), and the picture is graded a little brighter and
+    less saturated. Measured on Oct 18, this brought motion blur, sharpness,
+    exposure, and saturation close to real phone footage; a plain blend of
+    neighboring frames ghosted fast hands instead. Frame rate, frame count, and
+    audio are kept. Score the original, not the copy: the blur smooths keypoint
+    jitter and inflates the motion score.
+
+    Raises:
+        ValueError: src is missing or isn't a readable video.
+        RuntimeError: ffmpeg failed.
+    """
+    fps = probe(src).fps
+    filters = (
+        f"minterpolate=fps={4 * fps}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1,"
+        f"tmix=frames=3:weights='1 1 1',fps={fps},"
+        "eq=brightness=0.035:saturation=0.92:gamma=1.03"
+    )
+    _ffmpeg(
+        "-v", "error", "-y", "-i", str(src), "-map", "0:v", "-map", "0:a?",
+        "-vf", filters, "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p",
+        "-c:a", "copy", str(dest),
+    )  # fmt: skip
+
+
+def join(parts: Sequence[Path], dest: Path, *, frames: int, audio: Path) -> None:
+    """Writes chunks of a take back to back as one video, with a soundtrack.
+
+    Each part after the first starts with a repeat of the previous part's last
+    frame, which is dropped, and the result is cut to frames frames. It takes
+    the first part's frame rate.
+
+    Args:
+        parts: The chunk videos, in order.
+        dest: Where to write the joined .mp4.
+        frames: The take's length in frames.
+        audio: A video whose soundtrack, if any, the joined video gets.
+
+    Raises:
+        ValueError: The first part is missing or isn't a readable video.
+        RuntimeError: ffmpeg failed.
+    """
+    fps = probe(parts[0]).fps
+    inputs = [arg for part in parts for arg in ("-i", str(part))]
+    trims = "".join(
+        f"[{index}:v]trim=start_frame={min(index, 1)},setpts=PTS-STARTPTS[v{index}];"
+        for index in range(len(parts))
+    )
+    joined = "".join(f"[v{index}]" for index in range(len(parts)))
+    filters = f"{trims}{joined}concat=n={len(parts)}:v=1:a=0,trim=end_frame={frames}[v]"
+    _ffmpeg(
+        "-v", "error", "-y", *inputs, "-i", str(audio), "-filter_complex", filters,
+        "-map", "[v]", "-map", f"{len(parts)}:a?", "-r", str(fps),
+        "-t", str(frames / fps), "-c:v", "libx264", "-crf", "14",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", str(dest),
     )  # fmt: skip
 
 

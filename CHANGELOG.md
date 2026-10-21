@@ -2,7 +2,19 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The motion-transfer workflow no longer saves a side-by-side comparison video. It held
+  a second full-length copy of every frame and ran a 48GB pod out of memory on a 14s
+  clip.
+- The `cloud-48gb` profile uses the int8 model, as verified on an A40; it named the
+  bf16 model, which the pod didn't have.
+
 ### Fixed
+
+- RunPod: ComfyUI starts with `--disable-pinned-memory`. It sizes its RAM caches from
+  the host's memory, not the pod's limit, so pinned model copies piled up until the
+  container was killed mid-render.
 
 - Pose guidance now covers the whole sampling run. Inside our exported workflow's
   subgraph, `pose_end_percent` was wired to the `pose_start_percent` input, so the window
@@ -12,6 +24,48 @@
 
 ### Added
 
+- The distilled model as an option (`workflow.distilled`, `render.py --distilled`): Wan
+  Animate 2's distilled file of the same precision, run as its makers do, 10 Euler steps
+  with the LightX2V LoRA off. New setting `sampler` (`render.py --sampler`). On the
+  full 13.9s test it scores 90.4 against the base model's 93.9 and takes ~1.5x as long,
+  but keeps finer detail and looks more natural.
+- Composing references in one call (`pipeline.compose_references`), with a generic
+  instruction built from the character description (`compose.prompt`) that matched the
+  hand-tuned prompt's quality; `sheet.extract` returns all the sheet's views at once.
+- Input quality gate (`framing.check`): warns in plain language, with times and a fix,
+  when the head, a hand, or the feet leave the frame, when someone else at least half
+  the dancer's height is in it, when the dancer can't be seen, or when the pose is too
+  blurry to read. Warnings never block a render.
+- Auto-reframe (`framing.reframe`, on by default; `render.py --no-reframe`): one fixed
+  window around everything the dancer reaches, at the output's aspect ratio, so a small
+  or off-center dancer fills the frame. Fixed rather than panning, because the
+  generated background stands still and a panning crop would turn steps into sliding.
+- Chunk-wise best-of-N (`pipeline.render_chunked`, `render.py --chunked`): every ~2.7s
+  chunk is rendered with each seed, continuing from the best version of the chunk
+  before, and the best is kept; same cost as one take per seed. Chunks are planned
+  exactly as the workflow's loop plans them (`workflow.plan_chunks`), and each runs as
+  its own job (`workflow.chunk_graph`).
+- Real-footage LoRA in the motion-transfer workflow ("Real-footage LoRA" node at
+  strength 2.0, after LightX2V): trained on the developer's own iPhone clips with
+  musubi-tuner on Wan 2.1 I2V 720p, the model Wan Animate 2 was fine-tuned from. It
+  adds camera-like motion blur on fast moves and flatter light. New setting
+  `realism_lora_strength` (`render.py --realism-lora-strength`); 0 removes the node, so
+  installs without the LoRA file still run. Training setup in `deploy/lora/` and
+  `scripts/prepare_lora_clips.py` (upright, tone-mapped SDR clips with captions).
+- `scripts/sheet.py` takes several images (say, a full-body front, a face close-up, and
+  a back view) and picks the best views across them.
+- Paste-and-relight tooling (`compose.paste`, `sheet.cutout`, `scripts/relight.py`,
+  `compose.patch(denoise=...)`, and `compose.py` without `--character` for background-
+  only edits); parked, since the cut edge left a light line around the character.
+- Qwen-Image 2.1 as the default editor for composing the character into a background
+  photo (`workflows/rigless_compose_qwen_image_2_1_api.json`, `compose.py --editor`,
+  `download_models.py --qwen-image-21`). It keeps the sheet's suit, tie, and monocle in
+  one pass, where Qwen-Image-Edit 2511 needed full sampling and a face-detail pass. Its
+  license allows research and evaluation only; 2511 (Apache-2.0) remains available.
+- Camera finish: every take also gets `finished.mp4`, with optical-flow motion blur and
+  a slightly brighter, less saturated grade so it reads like phone footage
+  (`video_prep.finish`). Scoring still uses the raw `result.mp4`, since the blur would
+  inflate the motion score.
 - Character sheet splitting (`rigless.sheet`, `scripts/sheet.py`): finds every figure
   with the pose estimator's person detector, separates it from the plain backdrop by
   color, and picks the front full-body view, the most frontal face close-up, and the back

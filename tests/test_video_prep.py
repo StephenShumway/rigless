@@ -53,6 +53,30 @@ def test_seconds_keeps_only_the_start(make_video: MakeVideo, tmp_path: Path) -> 
     assert video_prep.probe(dest).frames == 30
 
 
+def test_finished_take_keeps_its_timing(make_video: MakeVideo, tmp_path: Path) -> None:
+    src = make_video(96, 160, seconds=1)
+    dest = tmp_path / "finished.mp4"
+
+    video_prep.finish(src, dest)
+
+    assert video_prep.probe(dest) == video_prep.probe(src)
+
+
+def test_finished_take_keeps_its_soundtrack(
+    make_video: MakeVideo, tmp_path: Path
+) -> None:
+    dest = tmp_path / "finished.mp4"
+
+    video_prep.finish(make_video(96, 160, seconds=1), dest)
+
+    probe = subprocess.run(
+        [imageio_ffmpeg.get_ffmpeg_exe(), "-i", str(dest)],
+        capture_output=True,
+        text=True,
+    )
+    assert "Audio:" in probe.stderr
+
+
 def test_black_bars_are_found(make_video: MakeVideo) -> None:
     pillarboxed = make_video(608, 1080, pad_to=(1920, 1080))
 
@@ -84,3 +108,15 @@ def test_probe_rejects_a_file_that_is_not_a_video(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="readable video"):
         video_prep.probe(fake)
+
+
+@pytest.mark.parametrize(("frames", "expected"), [(100, 59), (40, 40)])
+def test_joined_chunks_drop_the_repeated_frame_and_cut_to_length(
+    make_video: MakeVideo, tmp_path: Path, frames: int, expected: int
+) -> None:
+    parts = [make_video(96, 160, name="a.mp4"), make_video(96, 160, name="b.mp4")]
+    dest = tmp_path / "joined.mp4"
+
+    video_prep.join(parts, dest, frames=frames, audio=parts[0])
+
+    assert video_prep.probe(dest).frames == expected

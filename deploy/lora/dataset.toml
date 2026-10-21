@@ -1,0 +1,18 @@
+# musubi-tuner dataset for the real-footage LoRA: the clips from
+# scripts/prepare_lora_clips.py (upright 720x1280 SDR video + .txt captions).
+
+[general]
+resolution = [832, 480]  # 480p area; buckets turn it upright for portrait clips
+caption_extension = ".txt"
+batch_size = 1
+enable_bucket = true
+bucket_no_upscale = false
+
+[[datasets]]
+video_directory = "/workspace/lora/clips"
+cache_directory = "/workspace/lora/cache"
+target_frames = [49]  # 1.6s windows at 30fps; Wan needs 4n+1
+# The same number of windows from every clip, so long clips (one hallway is most of
+# the footage) don't dominate the look.
+frame_extraction = "uniform"
+frame_sample = 8
