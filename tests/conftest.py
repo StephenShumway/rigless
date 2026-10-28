@@ -8,22 +8,13 @@ import pytest
 
 @pytest.fixture
 def make_video(tmp_path: Path) -> Callable[..., Path]:
-    """Returns a factory for short 30fps test clips with a sine-tone soundtrack.
-
-    pad_to letterboxes or pillarboxes the picture with black bars to that size.
-    """
+    """Returns a factory for short 30fps test clips with a sine-tone soundtrack."""
 
     def make(
-        width: int,
-        height: int,
-        seconds: float = 1,
-        pad_to: tuple[int, int] | None = None,
-        name: str = "src.mp4",
+        width: int, height: int, seconds: float = 1, name: str = "src.mp4"
     ) -> Path:
         path = tmp_path / name
         video = f"color=c=0x808080:size={width}x{height}:rate=30:duration={seconds}"
-        if pad_to:
-            video += f",pad={pad_to[0]}:{pad_to[1]}:(ow-iw)/2:(oh-ih)/2:black"
         subprocess.run(
             [
                 imageio_ffmpeg.get_ffmpeg_exe(), "-v", "error",

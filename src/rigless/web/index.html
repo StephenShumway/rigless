@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#21211e">
+  <title>Rigless</title>
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <link rel="preload" href="/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-play" viewBox="0 0 16 16"><path d="M5 3.2v9.6a.6.6 0 0 0 .9.5l7.6-4.8a.6.6 0 0 0 0-1L5.9 2.7a.6.6 0 0 0-.9.5Z" fill="currentColor"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 16 16"><rect x="4" y="3" width="2.6" height="10" rx=".8" fill="currentColor"/><rect x="9.4" y="3" width="2.6" height="10" rx=".8" fill="currentColor"/></symbol>
+    <symbol id="i-back" viewBox="0 0 16 16"><path d="M10 3.5 5.5 8l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-forward" viewBox="0 0 16 16"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-clear" viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.3a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-8.3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v3.5A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5V14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 16 16"><path d="M3 13l.6-2.7L11 2.9a1.4 1.4 0 0 1 2 2L5.6 12.4ZM9.8 4.1l2 2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+    <symbol id="i-close" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+    <symbol id="i-download" viewBox="0 0 16 16"><path d="M8 2.5v7.5m0 0L4.8 6.8M8 10l3.2-3.2M3 13h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 16 16"><path d="M8 2.6 14.2 13.2H1.8Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6.6v2.9M8 11.4v.1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-film" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 2.5v11M10.5 2.5v11M2.5 6h3M2.5 10h3M10.5 6h3M10.5 10h3" fill="none" stroke="currentColor" stroke-width="1.2"/></symbol>
+    <symbol id="i-queue" viewBox="0 0 16 16"><path d="M2.5 4h8M2.5 8h8M2.5 12h4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M10 10.2v3.6l3.2-1.8Z" fill="currentColor"/></symbol>
+    <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="7.5" r="3.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M5 20c.6-3.9 3.4-6 7-6s6.4 2.1 7 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  </svg>
+
+  <header class="topbar">
+    <a class="brand" href="/" data-link aria-label="Rigless, new video">
+      <img class="brand-mark" src="/logo.svg" alt="">
+    </a>
+    <nav class="nav" aria-label="Pages">
+      <a class="tab" href="/" data-link data-view="set">New Video</a>
+      <a class="tab" href="/?view=shoots" data-link data-view="shoots">History</a>
+      <a class="tab" href="/?view=queue" data-link data-view="queue">Queue<span class="count-chip nav-count" hidden></span></a>
+    </nav>
+    <div class="topbar-end">
+      <button class="btn connection" id="connection" type="button" aria-haspopup="dialog" title="Where Rigless renders">
+        <span class="connection-dot" aria-hidden="true"></span>
+        <span class="connection-label" role="status">Connecting…</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="drop-shade" aria-hidden="true"><p>Drop a clip or character pictures</p></div>
+
+  <template id="person-card">
+    <section class="card character person" tabindex="0" aria-label="A person to replace">
+      <div class="card-head">
+        <span class="mask-badge" aria-hidden="true">1</span>
+        <h2 class="card-title">Character</h2>
+        <button class="icon-btn person-remove" type="button" title="Remove this person" aria-label="Remove this person" hidden>×</button>
+      </div>
+      <label class="slot" data-drop>
+        <input type="file" name="sheet" accept="image/*" multiple>
+        <span class="slot-empty">
+          <svg class="slot-icon" aria-hidden="true"><use href="#i-person"/></svg>
+          <strong>Add the character</strong>
+          <span>A sheet or a few views</span>
+        </span>
+      </label>
+      <div class="pictures" hidden></div>
+      <div class="character-status" hidden>
+        <p class="character-status-label" aria-live="polite"></p>
+        <div class="meter"><span></span></div>
+      </div>
+      <div class="recent" hidden>
+        <span class="label">Recent</span>
+        <div class="recent-list"></div>
+      </div>
+    </section>
+  </template>
+
+  <main id="app">
+    <!-- One screen: the controls, the footage and who gets replaced, and the takes -->
+    <section id="view-set" class="view" hidden>
+      <div class="set">
+        <aside class="panel set-panel" aria-label="Shoot">
+          <div class="panel-head">
+            <h1 class="page-title">New Video</h1>
+            <button class="icon-btn rename-title" type="button" title="Rename" aria-label="Rename this shoot" hidden><svg aria-hidden="true"><use href="#i-edit"/></svg></button>
+            <span class="count reference-count" title="The pictures H3 gets, for everyone together"></span>
+          </div>
+
+          <div class="panel-body">
+            <div class="people"></div>
+            <button class="btn btn-ghost add-person" type="button" hidden>+ Add person</button>
+
+            <label class="card field notes-field">
+              <span class="card-head"><span class="card-title">Prompt</span><span class="optional">Optional</span></span>
+              <span class="prompt-box">
+                <span class="prompt-marks" aria-hidden="true"></span>
+                <textarea name="description" rows="3"></textarea>
+              </span>
+            </label>
+
+            <section class="card notes" hidden>
+              <h2 class="card-title">Notes on the footage</h2>
+              <ul></ul>
+            </section>
+          </div>
+
+          <div class="panel-foot">
+            <div class="status" hidden>
+              <div class="status-line">
+                <span class="spinner" aria-hidden="true"></span>
+                <p class="status-label" aria-live="polite"></p>
+                <p class="status-time"></p>
+              </div>
+              <div class="meter"><span></span></div>
+            </div>
+            <p class="form-error" role="alert" hidden></p>
+            <div class="generate-row">
+              <div class="quality" role="radiogroup" aria-label="Quality">
+                <label title="480p, quicker: for trying things out"><input type="radio" name="quality" value="draft"><span>Draft</span></label>
+                <label title="768p, the full quality"><input type="radio" name="quality" value="full" checked><span>Full</span></label>
+              </div>
+              <button class="btn btn-primary btn-large" type="button" id="generate" disabled>Generate</button>
+            </div>
+            <p class="next-step" aria-live="polite"></p>
+            <p class="powered">Powered by <a class="license-link" href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE" target="_blank" rel="noopener">MiniMax H3</a><span class="report" hidden> · <a class="report-link" href="#">Report misuse</a></span></p>
+          </div>
+        </aside>
+
+        <div class="stage">
+          <div class="stage-head">
+            <div class="viewer-tabs" role="tablist" aria-label="What the viewer shows"></div>
+            <p class="clip-info"></p>
+          </div>
+          <div class="stage-body">
+            <figure class="monitor" data-state="empty">
+              <div class="monitor-frame">
+                <label class="monitor-drop" data-drop>
+                  <input type="file" name="footage" accept="video/*">
+                  <span class="drop-copy">
+                    <svg class="drop-icon" aria-hidden="true"><use href="#i-upload"/></svg>
+                    <strong>Drop a clip to start</strong>
+                    <span>or <u>choose a file</u></span>
+                  </span>
+                </label>
+                <video muted playsinline preload="auto"></video>
+                <video class="monitor-original" muted playsinline preload="auto" hidden></video>
+                <canvas class="overlay" aria-hidden="true"></canvas>
+                <button class="compare-hold pill" type="button" hidden>Hold to compare</button>
+                <span class="hud-tc pill" aria-hidden="true">00:00:00</span>
+                <p class="monitor-message pill" aria-live="polite"></p>
+              </div>
+            </figure>
+
+            <div class="transport empty">
+              <button class="icon-btn" type="button" data-action="play" aria-label="Play or pause">
+                <svg class="when-paused" aria-hidden="true"><use href="#i-play"/></svg>
+                <svg class="when-playing" aria-hidden="true"><use href="#i-pause"/></svg>
+              </button>
+              <button class="icon-btn" type="button" data-action="back" aria-label="One frame back"><svg aria-hidden="true"><use href="#i-back"/></svg></button>
+              <button class="icon-btn" type="button" data-action="forward" aria-label="One frame forward"><svg aria-hidden="true"><use href="#i-forward"/></svg></button>
+              <div class="trim" aria-label="Trim">
+                <div class="trim-track">
+                  <canvas class="filmstrip" aria-hidden="true"></canvas>
+                  <div class="trim-shade trim-shade-start" aria-hidden="true"></div>
+                  <div class="trim-shade trim-shade-end" aria-hidden="true"></div>
+                  <div class="trim-window" aria-hidden="true"></div>
+                  <div class="trim-marks" aria-hidden="true"></div>
+                  <div class="trim-head" aria-hidden="true"></div>
+                  <button class="trim-handle" type="button" data-edge="start" aria-label="Trim start"></button>
+                  <button class="trim-handle" type="button" data-edge="end" aria-label="Trim end"></button>
+                </div>
+              </div>
+              <p class="trim-readout"></p>
+            </div>
+          </div>
+        </div>
+
+        <aside class="panel takes" aria-label="Takes">
+          <div class="panel-head">
+            <h2 class="takes-title">Takes</h2>
+            <span class="count takes-count"></span>
+          </div>
+          <div class="panel-body">
+            <div class="result" hidden>
+              <a class="btn btn-primary btn-large" id="download" href="#" download>Download the best take</a>
+              <p class="result-note"></p>
+            </div>
+            <div class="take-grid"></div>
+            <div class="takes-empty">
+              <span class="empty-icon"><svg aria-hidden="true"><use href="#i-film"/></svg></span>
+              <p>No takes yet</p>
+              <p class="muted">Each take shows up here when it's done.</p>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- Every shoot, newest first -->
+    <section id="view-shoots" class="view" hidden>
+      <div class="page">
+        <div class="page-head">
+          <h1 class="page-heading">History</h1>
+          <span class="count shoots-count"></span>
+        </div>
+        <div class="page-body">
+          <ul class="shoot-grid"></ul>
+          <div class="page-empty" hidden>
+            <span class="empty-icon"><svg aria-hidden="true"><use href="#i-film"/></svg></span>
+            <h2>Nothing here yet</h2>
+            <p>A shoot is one clip and one character. Bring a clip of the person you want to replace.</p>
+            <a class="btn btn-primary" href="/" data-link><svg aria-hidden="true"><use href="#i-plus"/></svg>New Video</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- What the GPU is doing and what waits for it -->
+    <section id="view-queue" class="view" hidden>
+      <div class="page">
+        <div class="page-head">
+          <h1 class="page-heading">Queue</h1>
+          <span class="count queue-count"></span>
+        </div>
+        <div class="page-body">
+          <ol class="job-list"></ol>
+          <div class="page-empty" hidden>
+            <span class="empty-icon"><svg aria-hidden="true"><use href="#i-queue"/></svg></span>
+            <h2>Nothing in the queue</h2>
+            <p>Tracking and renders wait here for the GPU and run one at a time. Generate on a shoot to add one.</p>
+            <a class="btn" href="/?view=shoots" data-link>See your history</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Where Rigless renders: opened from the connection button -->
+    <dialog id="comfyui-dialog" class="dialog" aria-labelledby="comfyui-title" closedby="any" autofocus>
+      <div class="dialog-head">
+        <h2 class="dialog-title" id="comfyui-title">Where Rigless renders</h2>
+        <form method="dialog"><button class="icon-btn" value="close" aria-label="Close"><svg aria-hidden="true"><use href="#i-close"/></svg></button></form>
+      </div>
+      <div class="target-choice" role="radiogroup" aria-label="Where Rigless renders">
+        <label><input type="radio" name="target" value="runpod"><span>RunPod</span></label>
+        <label><input type="radio" name="target" value="local"><span>This computer</span></label>
+      </div>
+      <div class="dialog-body">
+        <p class="muted custom-note" hidden>Rigless sends its work to <code></code>, set by <code>COMFY_BASE_URL</code> in <code>.env</code>. Remove it there to choose here.</p>
+
+        <section class="stack" id="runpod" hidden>
+          <form id="runpod-key" class="stack" hidden>
+            <p class="muted">Rent a GPU in your own RunPod account. Deploy sets it up and connects Rigless to it. Your API key stays in this browser.</p>
+            <label class="field">
+              <span class="label">API key</span>
+              <input name="key" type="password" autocomplete="off" required>
+            </label>
+            <div class="card-actions"><button class="btn btn-primary" type="submit">Use this key</button></div>
+          </form>
+          <p class="pod-status" hidden></p>
+          <form id="runpod-start" class="stack" hidden>
+            <label class="field">
+              <span class="label">GPU</span>
+              <select name="gpu"></select>
+            </label>
+            <p class="muted">Starts a pod with a 100 GB disk wherever RunPod has this GPU free. It downloads the models first, roughly 25 minutes. Afterwards you can pause it (the disk costs $20/month while paused) or delete it.</p>
+            <div class="card-actions"><button class="btn btn-primary" type="submit">Deploy</button></div>
+          </form>
+          <div class="stack" id="runpod-running" hidden>
+            <p class="muted pod-costs"></p>
+            <div class="card-actions">
+              <button class="btn" type="button" id="pause-pod">Pause</button>
+              <button class="btn" type="button" id="resume-pod" hidden>Resume</button>
+              <button class="btn" type="button" id="delete-pod">Delete</button>
+            </div>
+          </div>
+          <p class="settings-message runpod-message" aria-live="polite"></p>
+          <p class="key-line"><button class="link" type="button" id="forget-key" hidden>Forget key</button></p>
+        </section>
+
+        <section class="stack" id="local" hidden>
+          <p class="muted">Rigless sends its work to ComfyUI on this computer through comfy-api-proxy at <code>http://127.0.0.1:8189</code>. It needs a GPU with 48 GB or more, and both running first; the README shows how.</p>
+          <p class="settings-message local-message" aria-live="polite"></p>
+          <div class="card-actions"><button class="btn" type="button" id="test-local">Test</button></div>
+        </section>
+      </div>
+    </dialog>
+
+    <!-- MiniMax H3's terms, agreed to once before the first render -->
+    <dialog id="terms-dialog" class="dialog terms">
+      <form method="dialog" class="dialog-body">
+        <h2 class="dialog-title">Before you render: MiniMax H3's terms</h2>
+        <div class="terms-notice stack"></div>
+        <p class="muted">
+          <a class="license-link" href="#" target="_blank" rel="noopener">The license and its Acceptable Use Policy</a>
+          · <a class="authorization-link" href="#" target="_blank" rel="noopener">MiniMax's authorization page</a>
+        </p>
+        <label class="consent">
+          <input type="checkbox" id="terms-agree">
+          <span>I've read the license and its Acceptable Use Policy, and I agree to them. I'll only use footage and pictures of people who agreed to it or aren't real, and keep it safe for work.</span>
+        </label>
+        <div class="card-actions">
+          <button class="btn btn-ghost" value="cancel">Cancel</button>
+          <button class="btn btn-primary" value="agree" id="terms-accept" disabled>Agree</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Passcode, when the app is served beyond this computer -->
+    <section id="view-passcode" class="view" hidden>
+      <form id="passcode-form" class="closed-set">
+        <img class="brand-mark" src="/logo.svg" alt="">
+        <h1>This Rigless is private</h1>
+        <p class="muted">Enter the passcode to continue.</p>
+        <input type="text" name="username" value="rigless" autocomplete="username" hidden>
+        <label class="field">
+          <span class="label">Passcode</span>
+          <input name="passcode" type="password" autocomplete="current-password" required>
+        </label>
+        <p class="form-error" role="alert" hidden></p>
+        <button class="btn btn-primary" type="submit">Enter</button>
+      </form>
+    </section>
+  </main>
+
+</body>
+</html>

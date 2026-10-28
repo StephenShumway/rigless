@@ -1,98 +1,96 @@
-"""Settings for rigless, read once from the environment and the repo's `.env`.
+"""Settings for rigless: the environment, an optional `.env`, and the connection.
 
-This is the only module that reads environment variables, and `save` the only
-code that writes `.env` (the app's settings page uses it). Every setting has a
-local default, so an empty `.env` works against a local ComfyUI behind
-comfy-api-proxy. GPU presets live in `profiles/<name>.toml`.
+This is the only module that reads environment variables. Every setting has a
+default, so Rigless runs with no `.env` at all. Where Rigless sends its work,
+a RunPod pod or ComfyUI on this computer, is chosen in the app and kept in
+`runs/app/connection.json` with the pod's token; COMFY_BASE_URL in the
+environment overrides that choice, for a ComfyUI anywhere else.
 
 Typical usage example:
 
   from rigless import config
 
-  overrides = config.load_profile(config.PROFILE)
+  target = config.connection()
+  client = Comfy(api_key=target.key)
 """
 
+import json
 import os
-import tomllib
-from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from dotenv import load_dotenv
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ENV_FILE = REPO_ROOT / ".env"
-load_dotenv(ENV_FILE)
+load_dotenv(REPO_ROOT / ".env")
 
-
-def _connection() -> tuple[str, str | None, str]:
-    """Reads the settings the app can change: ComfyUI's address, key, profile."""
-    return (
-        os.environ.get("COMFY_BASE_URL") or "http://127.0.0.1:8189",
-        os.environ.get("COMFY_API_KEY") or None,
-        os.environ.get("RIGLESS_PROFILE") or "local-10gb",
-    )
-
-
-COMFY_BASE_URL, COMFY_API_KEY, PROFILE = _connection()
-# Only for downloading gated models for experiments.
+# Only for downloading models from a private Hugging Face repository.
 HF_TOKEN = os.environ.get("HF_TOKEN") or None
 # Required to serve the app beyond this computer; None keeps it open locally.
 PASSCODE = os.environ.get("RIGLESS_PASSCODE") or None
-
-# Our workflow: ComfyUI's Wan Animate 2 template export with the pose guidance window
-# restored to the full run (pose_end_percent 1.0); the untouched export sits beside it.
-WORKFLOW_PATH = REPO_ROOT / "workflows" / "rigless_motion_transfer_api.json"
-# Qwen-Image-Edit 2511 (ComfyUI's int8 template, flattened, with a second image input).
-COMPOSE_WORKFLOW_PATH = REPO_ROOT / "workflows" / "rigless_compose_reference_api.json"
-# Qwen-Image 2.1 (ComfyUI's image-edit template, flattened, without its prompt
-# rewriter). Better identity, but its license allows research and evaluation only.
-COMPOSE_QWEN21_WORKFLOW_PATH = (
-    REPO_ROOT / "workflows" / "rigless_compose_qwen_image_2_1_api.json"
-)
-PROFILES_DIR = REPO_ROOT / "profiles"
 RUNS_DIR = REPO_ROOT / "runs"
+CONNECTION_FILE = RUNS_DIR / "app" / "connection.json"
+LOCAL_URL = "http://127.0.0.1:8189"  # comfy-api-proxy's default address
+CUSTOM_URL = os.environ.get("COMFY_BASE_URL") or None
+CUSTOM_KEY = os.environ.get("COMFY_API_KEY") or None
+
+Choice = Literal["runpod", "local"]
 
 
-def load_profile(name: str) -> dict[str, Any]:
-    """Reads a GPU preset: workflow settings that override the template's.
+@dataclass(frozen=True)
+class Connection:
+    """Where Rigless sends its work.
 
-    Raises:
-        FileNotFoundError: profiles/ has no preset with that name.
+    Attributes:
+        target: "runpod" (the app's pod), "local" (ComfyUI on this computer),
+            or "custom" (COMFY_BASE_URL in the environment).
+        url: The Comfy API v2 address, or None when RunPod is chosen and
+            there is no pod.
+        key: The address's bearer token, or None if it needs none.
     """
-    with (PROFILES_DIR / f"{name}.toml").open("rb") as file:
-        return tomllib.load(file)
+
+    target: Literal["runpod", "local", "custom"]
+    url: str | None
+    key: str | None = None
 
 
-def save(values: Mapping[str, str]) -> None:
-    """Writes settings to `.env` and applies them to this process.
-
-    The rest of `.env`, comments included, is kept. An empty value unsets a
-    setting, so its default applies.
-
-    Args:
-        values: New values by environment variable name, such as
-            {"COMFY_BASE_URL": "http://127.0.0.1:8199"}.
-
-    Raises:
-        ValueError: A value spans several lines.
-    """
-    if any("\n" in value or "\r" in value for value in values.values()):
-        raise ValueError("Settings must fit on one line.")
-    lines = ENV_FILE.read_text("utf-8").splitlines() if ENV_FILE.exists() else []
-    pending = dict(values)
-    for index, line in enumerate(lines):
-        name = line.split("=", 1)[0].strip()
-        if "=" in line and name in pending:
-            lines[index] = _env_line(name, pending.pop(name))
-    lines += [_env_line(name, value) for name, value in pending.items()]
-    ENV_FILE.write_text("\n".join(lines) + "\n", "utf-8")
-    os.environ.update(values)
-    global COMFY_BASE_URL, COMFY_API_KEY, PROFILE
-    COMFY_BASE_URL, COMFY_API_KEY, PROFILE = _connection()
+def connection() -> Connection:
+    """Returns where Rigless sends its work now. RunPod unless chosen otherwise."""
+    if CUSTOM_URL:
+        return Connection("custom", CUSTOM_URL, CUSTOM_KEY)
+    saved = _saved()
+    if saved.get("target") == "local":
+        return Connection("local", LOCAL_URL)
+    pod = saved.get("pod") or {}
+    return Connection("runpod", pod.get("url"), pod.get("token"))
 
 
-def _env_line(name: str, value: str) -> str:
-    """Returns a `.env` line that python-dotenv reads back as exactly value."""
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'{name}="{escaped}"'
+def choose(target: Choice) -> None:
+    """Sends Rigless's work to RunPod or to ComfyUI on this computer."""
+    _save({**_saved(), "target": target})
+
+
+def save_pod(url: str, token: str) -> None:
+    """Records a new pod and its proxy token, and sends Rigless's work to it."""
+    _save({"target": "runpod", "pod": {"url": url, "token": token}})
+
+
+def forget_pod() -> None:
+    """Forgets the pod once it's deleted; RunPod stays chosen if it was."""
+    _save({**_saved(), "pod": None})
+
+
+def _saved() -> dict[str, Any]:
+    if not CONNECTION_FILE.exists():
+        return {}
+    saved: dict[str, Any] = json.loads(CONNECTION_FILE.read_text("utf-8"))
+    return saved
+
+
+def _save(values: dict[str, Any]) -> None:
+    """Writes the connection whole, so a crash mid-write can't leave half a file."""
+    CONNECTION_FILE.parent.mkdir(parents=True, exist_ok=True)
+    partial = CONNECTION_FILE.with_suffix(".tmp")
+    partial.write_text(json.dumps(values, indent=2), "utf-8")
+    partial.replace(CONNECTION_FILE)

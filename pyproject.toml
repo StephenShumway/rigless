@@ -8,14 +8,17 @@ requires-python = ">=3.12"
 dependencies = [
     "comfy-api-proxy>=0.1.6",
     "comfy-sdk>=0.5.0",
-    "gradio>=6.30.0",
+    "fastapi>=0.156.0",
+    "httpx>=0.28.1",
     "imageio-ffmpeg>=0.6.0",
     "numpy>=2.5.4",
     "onnxruntime>=1.31.0",
     "pillow>=12.3.0",
     "python-dotenv>=1.2.4",
+    "python-multipart>=0.0.32",
     # rtmlib pulls in OpenCV itself; don't add a second OpenCV package.
     "rtmlib>=0.0.16",
+    "uvicorn>=0.54.0",
 ]
 
 [project.scripts]
@@ -23,6 +26,7 @@ rigless = "rigless.app:main"
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.15.1",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "ruff>=0.17.1",

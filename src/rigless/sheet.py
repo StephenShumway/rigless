@@ -1,10 +1,10 @@
-"""Splitting a character sheet into the views the pipeline needs.
+"""Splitting a character sheet into the views MiniMax H3 gets as pictures.
 
 A character sheet shows one character several times on a plain backdrop:
-full-body views from several angles and often face close-ups. The compose step
-takes the front full-body view as Picture 2 and the most frontal face close-up
-as Picture 3 (small identity details such as a monocle only survive with it).
-The back view is kept for later.
+full-body views from several angles and often face close-ups. The swap gives H3
+the front full-body view as Picture 1, then the most frontal face close-up
+(small identity details such as a monocle survive only with it), the back
+view, and any other views.
 
 Figures are found by the pose estimator's person detector, and their pixels by
 color distance from the backdrop, which must be plain and roughly uniform. The
@@ -67,19 +67,21 @@ class View:
 
 @dataclass(frozen=True)
 class Views:
-    """The views of a character the pipeline uses, cut out of its images.
+    """The views of a character, cut out of its images.
 
     Attributes:
         front: The full-body view that faces the camera most squarely.
         close_up: The most frontal face close-up, or None if there is none.
         back: The full-body view from behind, or None if there is none.
         warning: Advice about the front view's pose, or None.
+        others: Every other view, in the order found.
     """
 
     front: Image.Image
     close_up: Image.Image | None
     back: Image.Image | None
     warning: str | None
+    others: tuple[Image.Image, ...] = ()
 
 
 def extract(images: list[Image.Image]) -> Views:
@@ -99,11 +101,17 @@ def extract(images: list[Image.Image]) -> Views:
         return crop(image, views, view)
 
     front = pick_front(pooled)
+    close_up = pick_close_up(pooled)
+    back = pick_back(pooled)
+    picked = {id(view) for view in (front, close_up, back) if view is not None}
     return Views(
         crop(*owners[id(front)], front),
-        cut(pick_close_up(pooled)),
-        cut(pick_back(pooled)),
+        cut(close_up),
+        cut(back),
         pose_warning(front),
+        tuple(
+            crop(*owners[id(view)], view) for view in pooled if id(view) not in picked
+        ),
     )
 
 

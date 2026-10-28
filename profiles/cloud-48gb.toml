@@ -1,9 +1,0 @@
-# 48GB GPU such as an A40, L40S, or RTX 6000. Verified on an A40 (Oct 19-20) at 720p.
-# Keys are rigless.workflow.Settings fields; anything not set keeps the workflow's value.
-width = 720
-height = 1280
-# int8 runs natively on the A40 (fp8 is emulated there), and bf16 gave nearly
-# identical frames (Oct 20).
-model = "wan_animate_2_distill_int8_convrot.safetensors"
-cache_device = "gpu"
-context_windows = false

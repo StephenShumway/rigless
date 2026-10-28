@@ -1,50 +1,42 @@
-import os
 from pathlib import Path
 
 import pytest
-from dotenv import dotenv_values
 
 from rigless import config
+from rigless.config import Connection
 
-TRICKY = r'p@ss "word" \ # not a comment'
+POD = "https://abc123-8189.proxy.runpod.net"
 
 
-def test_saved_settings_read_back_and_the_rest_of_env_is_kept(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.fixture(autouse=True)
+def connection_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "CONNECTION_FILE", tmp_path / "app" / "connection.json")
+    monkeypatch.setattr(config, "CUSTOM_URL", None)
+    monkeypatch.setattr(config, "CUSTOM_KEY", None)
+
+
+def test_switching_to_this_computer_and_back_keeps_the_pod() -> None:
+    config.save_pod(POD, "token")
+
+    config.choose("local")
+    assert config.connection() == Connection("local", config.LOCAL_URL)
+
+    config.choose("runpod")
+    assert config.connection() == Connection("runpod", POD, "token")
+
+
+def test_stopped_pod_leaves_runpod_chosen_without_an_address() -> None:
+    config.save_pod(POD, "token")
+
+    config.forget_pod()
+
+    assert config.connection() == Connection("runpod", None)
+
+
+def test_comfy_base_url_in_the_environment_overrides_the_choice(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    env = tmp_path / ".env"
-    env.write_text("# my comment\nCOMFY_BASE_URL=http://old\nHF_TOKEN=abc\n", "utf-8")
-    monkeypatch.setattr(config, "ENV_FILE", env)
-    for name in ("COMFY_BASE_URL", "COMFY_API_KEY", "RIGLESS_PROFILE"):
-        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(config, "CUSTOM_URL", "http://gpu-box:8189")
+    config.choose("local")
 
-    config.save({"COMFY_BASE_URL": "http://new:8199", "COMFY_API_KEY": TRICKY})
-
-    assert dotenv_values(env) == {
-        "COMFY_BASE_URL": "http://new:8199",
-        "HF_TOKEN": "abc",
-        "COMFY_API_KEY": TRICKY,
-    }
-    assert env.read_text("utf-8").startswith("# my comment\n")
-    assert (config.COMFY_BASE_URL, config.COMFY_API_KEY) == ("http://new:8199", TRICKY)
-
-
-def test_empty_value_restores_the_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(config, "ENV_FILE", tmp_path / ".env")
-    monkeypatch.setenv("RIGLESS_PROFILE", "cloud-48gb")
-
-    config.save({"RIGLESS_PROFILE": ""})
-
-    assert config.PROFILE == "local-10gb"
-    assert os.environ["RIGLESS_PROFILE"] == ""
-
-
-def test_multiline_value_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(config, "ENV_FILE", tmp_path / ".env")
-
-    with pytest.raises(ValueError, match="one line"):
-        config.save({"COMFY_API_KEY": "a\nRIGLESS_PASSCODE=x"})
+    assert config.connection() == Connection("custom", "http://gpu-box:8189")

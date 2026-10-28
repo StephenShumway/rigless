@@ -1,32 +1,47 @@
 #!/usr/bin/env bash
-# One-time setup of a RunPod pod for rigless: ComfyUI, the Wan Animate 2, Qwen-Image
-# 2.1, and Qwen-Image-Edit 2511 models, and comfy-api-proxy, all under /workspace so they survive
-# pod stops. Safe to rerun: finished steps are skipped, interrupted downloads resume.
+# Sets up a RunPod pod for Rigless and starts it: ComfyUI with the H3 Relay nodes, the
+# MiniMax H3 character-swap models, the app's environment, and comfy-api-proxy, all
+# under /workspace (the pod's disk). A new pod takes about 25 minutes, mostly
+# downloads (~67GB); a restarted one skips what's there and is up in a few minutes.
+# Safe to rerun: interrupted downloads resume.
 #
 # Usage, on the pod from a checkout of this repo:
 #   bash deploy/runpod/setup.sh
 #
-# Needs the pod environment variable PROXY_TOKEN, set from a RunPod secret. The web app
-# also needs RIGLESS_PASSCODE (another secret) and port 8190 exposed over HTTP.
+# Needs a GPU with 48GB or more, a driver for CUDA 13 (comfy-kitchen's fast int8
+# kernels need it), the pod environment variable PROXY_TOKEN, and port 8189 exposed
+# over HTTP. HF_TOKEN, if set, downloads the Rigless Swap LoRA from a private repo.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 COMFY=/workspace/ComfyUI
 VENV=/workspace/venv
-COMFY_VERSION=v0.41.2  # the version our workflow was validated against
+COMFY_VERSION=v0.41.2  # the version the swap graph was validated against
+H3_RELAY=e2a7665b6eb8ea37a88c0de2c9c6b69a8f7c9220  # akatz-ai/h3-relay v2.0.1, GPL-3.0
+# The Pythons uv installs live on /workspace with the venvs, so both survive a
+# restart; its download cache stays off it, on the container disk.
+export UV_PYTHON_INSTALL_DIR=/workspace/uv/python UV_LINK_MODE=copy
+export UV_PYTHON_PREFERENCE=only-managed
 
-# ComfyUI turns off comfy-kitchen's fast int8/fp8 kernels unless PyTorch is built for
-# CUDA 13+, which needs a driver for CUDA 13+. Use cu130 where the driver allows it.
+command -v uv > /dev/null || curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+
 CUDA_MAJOR=$(nvidia-smi | grep -oE "CUDA Version: [0-9]+" | grep -oE "[0-9]+$")
-if [ "$CUDA_MAJOR" -ge 13 ]; then CUDA_TAG=cu130; else CUDA_TAG=cu128; fi
-TORCH_INDEX=https://download.pytorch.org/whl/$CUDA_TAG
-
-if [ ! -d "$COMFY" ]; then
-  git clone --depth 1 --branch "$COMFY_VERSION" https://github.com/Comfy-Org/ComfyUI "$COMFY"
+if [ "$CUDA_MAJOR" -lt 13 ]; then
+  echo "This pod's driver supports CUDA $CUDA_MAJOR; Rigless needs CUDA 13." >&2
+  exit 1
 fi
-[ -d "$VENV" ] || uv venv --python 3.12 "$VENV"
-uv pip install --python "$VENV/bin/python" torch torchvision torchaudio --index-url "$TORCH_INDEX"
-uv pip install --python "$VENV/bin/python" -r "$COMFY/requirements.txt" comfy-api-proxy==0.1.6
-"$VENV/bin/python" "$REPO/scripts/download_models.py" --models-dir "$COMFY/models" \
-  --standard --qwen-edit --qwen-image-21
+
+[ -d "$COMFY" ] || git clone --depth 1 --branch "$COMFY_VERSION" https://github.com/Comfy-Org/ComfyUI "$COMFY"
+if [ ! -d "$COMFY/custom_nodes/h3-relay" ]; then
+  git clone --quiet https://github.com/akatz-ai/h3-relay "$COMFY/custom_nodes/h3-relay"
+  git -C "$COMFY/custom_nodes/h3-relay" checkout --quiet "$H3_RELAY"
+fi
+[ -x "$VENV/bin/python" ] || uv venv --python 3.12 "$VENV"
+uv pip install --python "$VENV/bin/python" torch torchvision torchaudio \
+  --index-url https://download.pytorch.org/whl/cu130
+uv pip install --python "$VENV/bin/python" -r "$COMFY/requirements.txt" scipy comfy-api-proxy==0.1.6
+
+export UV_PROJECT_ENVIRONMENT=/workspace/rigless-venv
+uv sync --project "$REPO" --no-dev
+uv run --project "$REPO" --no-dev python "$REPO/scripts/download_models.py" --models-dir "$COMFY/models"
 bash "$REPO/deploy/runpod/start.sh"

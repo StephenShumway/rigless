@@ -8,166 +8,8 @@ import numpy as np
 import pytest
 
 from rigless import video_prep
-from rigless.pose import NUM_KEYPOINTS, PoseTrack
 
 MakeVideo = Callable[..., Path]
-
-
-def _size(path: Path) -> tuple[float, float]:
-    video = cv2.VideoCapture(str(path))
-    return video.get(cv2.CAP_PROP_FRAME_WIDTH), video.get(cv2.CAP_PROP_FRAME_HEIGHT)
-
-
-@pytest.mark.parametrize(("width", "height"), [(1080, 1920), (1920, 1080)])
-def test_prepared_video_just_covers_output_size(
-    make_video: MakeVideo, tmp_path: Path, width: int, height: int
-) -> None:
-    dest = tmp_path / "dest.mp4"
-
-    video_prep.prepare(make_video(width, height), dest, width=482, height=854)
-
-    out_w, out_h = _size(dest)
-    assert out_w >= 482 and out_h >= 854
-    assert out_w <= 484 or out_h <= 856
-    assert out_w / out_h == pytest.approx(width / height, rel=0.01)
-
-
-def test_prepared_video_keeps_audio(make_video: MakeVideo, tmp_path: Path) -> None:
-    dest = tmp_path / "dest.mp4"
-
-    video_prep.prepare(make_video(1080, 1920), dest, width=482, height=854)
-
-    probe = subprocess.run(
-        [imageio_ffmpeg.get_ffmpeg_exe(), "-i", str(dest)],
-        capture_output=True,
-        text=True,
-    )
-    assert "Audio:" in probe.stderr
-
-
-def test_seconds_keeps_only_the_start(make_video: MakeVideo, tmp_path: Path) -> None:
-    dest = tmp_path / "dest.mp4"
-
-    video_prep.prepare(
-        make_video(640, 360, seconds=2), dest, width=482, height=854, seconds=1
-    )
-
-    assert video_prep.probe(dest).frames == 30
-
-
-def _track(
-    frames: int, boxes: list[tuple[int, int, int, int]], found: bool = True
-) -> PoseTrack:
-    """A pose track whose keypoints run down each frame's (x0, y0, x1, y1) box.
-
-    Keypoint 0 (the nose) is at the top and 16 (an ankle) at the bottom; boxes
-    repeat their last entry for the remaining frames.
-    """
-    keypoints = np.empty((frames, NUM_KEYPOINTS, 2))
-    for index in range(frames):
-        x0, y0, x1, y1 = boxes[min(index, len(boxes) - 1)]
-        keypoints[index, :, 0] = np.linspace(x0, x1, NUM_KEYPOINTS)
-        keypoints[index, :, 1] = np.linspace(y0, y1, NUM_KEYPOINTS)
-    scores = np.full((frames, NUM_KEYPOINTS), 1.0 if found else 0.0)
-    return PoseTrack(keypoints, scores, fps=30.0)
-
-
-def _scene(frames: int, dancer_cols: list[tuple[int, int]]) -> np.ndarray:
-    """Frames of a textured 120x60 background with a dark 40px-tall dancer."""
-    background = np.random.default_rng(0).integers(100, 220, (120, 60, 3), np.uint8)
-    video = np.tile(background, (frames, 1, 1, 1))
-    for index in range(frames):
-        x0, x1 = dancer_cols[min(index, len(dancer_cols) - 1)]
-        video[index, 40:80, x0:x1] = 40
-    return video
-
-
-@pytest.mark.parametrize("with_track", [False, True])
-def test_finished_take_keeps_its_timing(
-    make_video: MakeVideo, tmp_path: Path, with_track: bool
-) -> None:
-    src = make_video(96, 160, seconds=1)
-    dest = tmp_path / "finished.mp4"
-    track = _track(30, [(30, 40, 60, 120)]) if with_track else None
-
-    video_prep.finish(src, dest, track)
-
-    assert video_prep.probe(dest) == video_prep.probe(src)
-
-
-@pytest.mark.parametrize("with_track", [False, True])
-def test_finished_take_keeps_its_soundtrack(
-    make_video: MakeVideo, tmp_path: Path, with_track: bool
-) -> None:
-    dest = tmp_path / "finished.mp4"
-    track = _track(30, [(30, 40, 60, 120)]) if with_track else None
-
-    video_prep.finish(make_video(96, 160, seconds=1), dest, track)
-
-    probe = subprocess.run(
-        [imageio_ffmpeg.get_ffmpeg_exe(), "-i", str(dest)],
-        capture_output=True,
-        text=True,
-    )
-    assert "Audio:" in probe.stderr
-
-
-def test_color_step_after_the_first_chunk_is_undone() -> None:
-    video = _scene(8, [(20, 40)])
-    video[4:, ..., 1] = (video[4:, ..., 1] * 0.94).round().astype(np.uint8)
-
-    steady = video_prep.steady_colors(
-        video, _track(8, [(20, 40, 40, 80)]), first_chunk=4
-    )
-
-    later = steady[4:].astype(int) - steady[0].astype(int)
-    assert np.abs(later.mean(axis=(1, 2))).max() < 0.5
-
-
-def test_dancer_moving_over_the_background_leaves_colors_alone() -> None:
-    cols = [(5, 15)] * 4 + [(40, 50)] * 4
-    video = _scene(8, cols)
-    track = _track(8, [(x0, 40, x1, 80) for x0, x1 in cols])
-
-    steady = video_prep.steady_colors(video, track, first_chunk=4)
-
-    assert np.abs(steady.astype(int) - video.astype(int)).max() <= 1
-
-
-def test_take_whose_dancer_was_never_found_is_unchanged() -> None:
-    video = _scene(8, [(20, 40)])
-    video[4:] = (video[4:] * 0.94).round().astype(np.uint8)
-
-    steady = video_prep.steady_colors(
-        video, _track(8, [(20, 40, 40, 80)], found=False), first_chunk=4
-    )
-
-    assert np.array_equal(steady, video)
-
-
-def test_black_bars_are_found(make_video: MakeVideo) -> None:
-    pillarboxed = make_video(608, 1080, pad_to=(1920, 1080))
-
-    assert video_prep.detect_crop(pillarboxed) == (608, 1080, 656, 0)
-
-
-def test_no_crop_without_black_bars(make_video: MakeVideo) -> None:
-    assert video_prep.detect_crop(make_video(1080, 1920)) is None
-
-
-def test_crop_is_applied_before_scaling(make_video: MakeVideo, tmp_path: Path) -> None:
-    dest = tmp_path / "dest.mp4"
-
-    video_prep.prepare(
-        make_video(608, 1080, pad_to=(1920, 1080)),
-        dest,
-        width=482,
-        height=854,
-        crop=(608, 1080, 656, 0),
-    )
-
-    out_w, out_h = _size(dest)
-    assert out_w / out_h == pytest.approx(608 / 1080, rel=0.01)
 
 
 def test_probe_rejects_a_file_that_is_not_a_video(tmp_path: Path) -> None:
@@ -178,13 +20,92 @@ def test_probe_rejects_a_file_that_is_not_a_video(tmp_path: Path) -> None:
         video_prep.probe(fake)
 
 
-@pytest.mark.parametrize(("frames", "expected"), [(100, 59), (40, 40)])
-def test_joined_chunks_drop_the_repeated_frame_and_cut_to_length(
-    make_video: MakeVideo, tmp_path: Path, frames: int, expected: int
+def test_trim_past_the_clip_end_stops_at_the_end() -> None:
+    assert video_prep.check_trim(2.0, 30.0, duration=9.5) == (2.0, 9.5)
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [(31.0, None), (3.0, 3.5), (5.0, 2.0), (0.0, 25.0)],
+    ids=["starts after the clip", "too short", "ends before it starts", "too long"],
+)
+def test_trims_that_cannot_be_rendered_are_refused(
+    start: float, end: float | None
 ) -> None:
-    parts = [make_video(96, 160, name="a.mp4"), make_video(96, 160, name="b.mp4")]
-    dest = tmp_path / "joined.mp4"
+    with pytest.raises(ValueError):
+        video_prep.check_trim(start, end, duration=30.0)
 
-    video_prep.join(parts, dest, frames=frames, audio=parts[0])
 
-    assert video_prep.probe(dest).frames == expected
+def test_conformed_footage_has_the_trimmed_frame_count_and_fits_the_size(
+    make_video: MakeVideo, tmp_path: Path
+) -> None:
+    dest = tmp_path / "footage.mp4"
+
+    video_prep.conform(
+        make_video(1080, 1920, seconds=3),
+        dest,
+        start=0.5,
+        end=2.5,
+        fps=24,
+        max_side=640,
+    )
+
+    info = video_prep.probe(dest)
+    assert info.frames == 48
+    assert (info.width, info.height) == (360, 640)
+
+
+def test_extracted_frame_is_the_one_asked_for(tmp_path: Path) -> None:
+    ramp = np.stack([np.full((16, 16), 10 * index, np.uint8) for index in range(12)])
+    video = tmp_path / "ramp.mp4"
+    video_prep.write_video(ramp, 24, video)
+
+    video_prep.extract_frame(video, 7, tmp_path / "frame.png")
+
+    frame = cv2.imread(str(tmp_path / "frame.png"), cv2.IMREAD_GRAYSCALE)
+    assert frame is not None
+    assert frame.mean() == pytest.approx(70, abs=4)
+
+
+def test_added_sound_never_shortens_the_video(
+    make_video: MakeVideo, tmp_path: Path
+) -> None:
+    video = make_video(96, 160, seconds=2, name="take.mp4")
+    sound = make_video(96, 160, seconds=1, name="clip.mp4")
+    dest = tmp_path / "finished.mp4"
+
+    video_prep.add_audio(video, sound, 0.0, dest)
+
+    assert video_prep.probe(dest).frames == video_prep.probe(video).frames
+    probe = subprocess.run(
+        [imageio_ffmpeg.get_ffmpeg_exe(), "-i", str(dest)],
+        capture_output=True,
+        text=True,
+    )
+    assert "Audio:" in probe.stderr
+
+
+def test_cut_keeps_the_frame_rate_exact(make_video: Callable[..., Path]) -> None:
+    # The cut's last frame had no length, so its rate read 24.057 instead of 24
+    # and ComfyUI wrote one mask frame too few (Oct 26).
+    src = make_video(64, 64, seconds=1)
+    dest = src.with_name("part.mp4")
+
+    video_prep.cut_frames(src, dest, 5, 26)
+
+    info = video_prep.probe(dest)
+    assert (info.frames, info.fps) == (21, 30.0)
+
+
+def test_lead_in_plays_the_opening_backward_then_the_whole_clip(tmp_path: Path) -> None:
+    ramp = np.stack([np.full((16, 16), 20 * index, np.uint8) for index in range(6)])
+    video = tmp_path / "ramp.mp4"
+    video_prep.write_video(ramp, 24, video)
+
+    video_prep.lead_in(video, 3, 24, tmp_path / "led.mp4")
+
+    levels = [
+        round(frame.mean() / 20)
+        for frame in video_prep.iter_frames(tmp_path / "led.mp4")
+    ]
+    assert levels == [3, 2, 1, 0, 1, 2, 3, 4, 5]
