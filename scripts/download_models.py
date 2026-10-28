@@ -24,7 +24,7 @@ H3 = "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main"
 TURBO = "https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/main"
 SAM = "https://huggingface.co/Comfy-Org/sam3.1/resolve/main"
 QWEN21 = "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main"
-SWAP_LORA_REPO = "https://huggingface.co/StephenShumway/rigless-swap-lora/resolve/main"
+SWAP_LORA_REPO = "https://huggingface.co/StephenShumway/rigless-lora/resolve/main"
 
 # Each model is (download URL, subfolder of ComfyUI's models folder).
 MODELS = [
