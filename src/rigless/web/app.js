@@ -77,8 +77,6 @@ const monitor = {
   key: "",
 };
 
-class PasscodeNeeded extends Error {}
-
 /* Helpers */
 
 function el(tag, props = {}, ...children) {
@@ -191,10 +189,6 @@ async function api(path, { method = "GET", json, headers = {} } = {}) {
   }
   const response = await fetch(path, options);
   const body = response.status === 204 ? null : await response.json().catch(() => null);
-  if (response.status === 401 && body && body.detail === "passcode") {
-    askPasscode();
-    throw new PasscodeNeeded();
-  }
   if (!response.ok) {
     const failure = new Error(errorMessage(body, response.status));
     failure.status = response.status;
@@ -213,10 +207,7 @@ function upload(url, form, onProgress) {
     };
     request.onload = () => {
       const body = request.response;
-      if (request.status === 401 && body && body.detail === "passcode") {
-        askPasscode();
-        reject(new PasscodeNeeded());
-      } else if (request.status >= 200 && request.status < 300) {
+      if (request.status >= 200 && request.status < 300) {
         resolve(body);
       } else {
         reject(new Error(errorMessage(body, request.status)));
@@ -282,7 +273,7 @@ async function checkConnection() {
     showConnection(result);
     if (result.target === "local") setLocalMessage(result.message, result.ok ? "ok" : "bad");
   } catch (failure) {
-    if (!(failure instanceof PasscodeNeeded)) showConnection({ ok: false, message: failure.message });
+    showConnection({ ok: false, message: failure.message });
   }
 }
 
@@ -342,7 +333,7 @@ async function refresh(id, token) {
   try {
     project = await api(`/api/projects/${encodeURIComponent(id)}`);
   } catch (failure) {
-    if (failure instanceof PasscodeNeeded || token !== state.route) return;
+    if (token !== state.route) return;
     if (state.project && state.project.id === id) {
       // The server may be restarting; keep the page and try again.
       state.reconnecting = true;
@@ -472,7 +463,7 @@ async function chooseFootage(file) {
     history.replaceState(null, "", `?p=${encodeURIComponent(id)}`);
     await refresh(id, token);
   } catch (failure) {
-    if (!(failure instanceof PasscodeNeeded) && token === state.route) {
+    if (token === state.route) {
       setMessage("");
       showError(failure.message);
       state.pendingSheet = state.sendingSheet;
@@ -567,6 +558,10 @@ function setupMonitor() {
   video.addEventListener("play", () => $(".transport").classList.add("playing"));
   video.addEventListener("pause", () => $(".transport").classList.remove("playing"));
   $(".monitor-frame").addEventListener("click", tapMonitor);
+  $(".remove-tap").addEventListener("click", (event) => {
+    event.stopPropagation(); // not a tap on the footage
+    removeTaps(state.person, currentFrame());
+  });
 
   for (const button of document.querySelectorAll(".transport .icon-btn")) {
     button.addEventListener("click", () => {
@@ -719,7 +714,6 @@ async function syncEdits() {
     applyProject(updated);
     if (body.trim && hasTaps(updated)) scheduleTrack();
   } catch (failure) {
-    if (failure instanceof PasscodeNeeded) return;
     if (failure.status === 409) return; // retried when the current step ends
     state.trimDirty = false;
     if (state.project.trim) state.trim = state.project.trim.slice();
@@ -842,10 +836,25 @@ async function sendAnchor(body) {
     scheduleTrack();
   } catch (failure) {
     endLocalActivity();
-    if (!(failure instanceof PasscodeNeeded)) showError(failure.message);
+    showError(failure.message);
   } finally {
     state.tapBusy = false;
     state.pendingTap = null;
+  }
+}
+
+// Clears a person's taps, or only those on one frame; what's left is tracked again.
+async function removeTaps(person, frame = null) {
+  clearTimeout(state.trackTimer);
+  showError("");
+  const path = frame === null ? `/anchors?person=${person}` : `/anchors/${frame}?person=${person}`;
+  try {
+    const project = await api(projectPath(path), { method: "DELETE" });
+    applyProject(project);
+    if (hasTaps(project)) scheduleTrack();
+    else endLocalActivity();
+  } catch (failure) {
+    showError(failure.message);
   }
 }
 
@@ -872,7 +881,7 @@ async function startTrack() {
     poll();
   } catch (failure) {
     endLocalActivity();
-    if (!(failure instanceof PasscodeNeeded)) showError(failure.message);
+    showError(failure.message);
   }
 }
 
@@ -894,6 +903,8 @@ function drawOverlay() {
   const pending = state.pendingTap && state.pendingTap.frame === frame ? state.pendingTap : null;
   const tracked = Boolean(project && project.track);
   const showingTake = Boolean(viewedTake(project));
+  $(".remove-tap").hidden = !anchors[state.person] || !video.paused || busy(project)
+    || state.tapBusy || showingTake;
   const fades = anchors.map((anchor) => (anchor && !tracked ? revealAlpha(anchor.mask) : 1));
   const masks = anchors.map((anchor) => (anchor ? anchor.mask : "")).join(",");
   const key = `${frame}|${width}x${height}|${masks}|${pending ? pending.point : ""}|${tracked}|${monitor.src}|${fades.map((fade) => fade.toFixed(2))}|${showingTake}`;
@@ -1063,7 +1074,7 @@ async function sendCharacter(files, append) {
     }));
     loadRecent();
   } catch (failure) {
-    if (!(failure instanceof PasscodeNeeded)) showError(failure.message);
+    showError(failure.message);
   } finally {
     state.sendingSheet = null;
     state.sheetProgress = null;
@@ -1078,7 +1089,7 @@ async function removePicture(index, id) {
     const path = `/pictures/${encodeURIComponent(id)}?person=${index}`;
     applyProject(await api(projectPath(path), { method: "DELETE" }));
   } catch (failure) {
-    if (!(failure instanceof PasscodeNeeded)) showError(failure.message);
+    showError(failure.message);
   }
 }
 
@@ -1089,7 +1100,7 @@ async function addPerson() {
     state.person = project.people.length - 1;
     applyProject(project);
   } catch (failure) {
-    if (!(failure instanceof PasscodeNeeded)) showError(failure.message);
+    showError(failure.message);
   }
 }
 
@@ -1123,7 +1134,7 @@ function removePerson(index) {
       }
     } catch (failure) {
       applyProject(before);
-      if (!(failure instanceof PasscodeNeeded)) showError(failure.message);
+      showError(failure.message);
     }
   };
 }
@@ -1194,6 +1205,10 @@ function personCard(index) {
   const input = $(".slot input", card);
   input.addEventListener("change", () => chooseCharacter([...input.files]));
   $(".person-remove", card).addEventListener("click", removePerson(index));
+  $(".clear-taps", card).addEventListener("click", (event) => {
+    event.stopPropagation(); // not a click that selects the person
+    removeTaps(index);
+  });
   return card;
 }
 
@@ -1207,6 +1222,12 @@ function renderPerson(card, index, several, used) {
   const remove = $(".person-remove", card);
   remove.hidden = !several;
   remove.disabled = busy(project);
+  const taps = people(project)[index]?.anchors ?? [];
+  $(".taps", card).hidden = taps.length === 0;
+  $(".taps-label", card).textContent = taps.length === 1
+    ? "Tapped on 1 frame. A tap on another frame fixes the tracking from there."
+    : `Tapped on ${taps.length} frames, each followed to the next.`;
+  $(".clear-taps", card).disabled = busy(project) || state.tapBusy;
   const tiles = [
     ...pictures(project, index).map((picture, position) => pictureTile({
       key: picture.id, src: fileUrl(project.id, picture.file), label: ROLES[picture.role] || "View",
@@ -1443,7 +1464,7 @@ function setupGenerate() {
       applyProject(await api(projectPath("/render"), { method: "POST", json: { takes: 1, quality: state.quality } }));
       poll();
     } catch (failure) {
-      if (!(failure instanceof PasscodeNeeded)) showError(failure.message);
+      showError(failure.message);
     } finally {
       renderChecklist();
     }
@@ -1481,7 +1502,7 @@ async function showReportLink() {
     $(".report-link").href = `mailto:${terms.report_email}`;
     $(".powered .report").hidden = false;
   } catch {
-    // Behind a passcode the page asks for it first; the line can wait.
+    // Without the terms the line just stays hidden.
   }
 }
 
@@ -1676,7 +1697,7 @@ function editName(label, project) {
         if (state.project && state.project.id === project.id) applyProject(renamed);
       } catch (failure) {
         label.textContent = project.title || "Untitled shoot";
-        if (!(failure instanceof PasscodeNeeded)) showError(failure.message);
+        showError(failure.message);
       }
     }
     loadShoots();
@@ -1715,7 +1736,7 @@ function deleteShoot(project) {
     try {
       await api(`/api/projects/${encodeURIComponent(project.id)}`, { method: "DELETE" });
     } catch (failure) {
-      if (!(failure instanceof PasscodeNeeded)) showError(failure.message);
+      showError(failure.message);
       return;
     }
     state.shoots = state.shoots.filter((shoot) => shoot.id !== project.id);
@@ -2081,7 +2102,7 @@ async function loadComfyUI() {
   try {
     renderTarget(await api("/api/connection"));
   } catch (failure) {
-    if (!(failure instanceof PasscodeNeeded)) setRunPodMessage(failure.message, "bad");
+    setRunPodMessage(failure.message, "bad");
   }
 }
 
@@ -2145,7 +2166,7 @@ async function loadRunPod() {
   try {
     renderRunPod(await runpodCall(""));
   } catch (failure) {
-    if (!(failure instanceof PasscodeNeeded)) setRunPodMessage(failure.message, "bad");
+    setRunPodMessage(failure.message, "bad");
   }
 }
 
@@ -2227,7 +2248,7 @@ function setupRunPod() {
       loadComfyUI();
       checkConnection();
     } catch (failure) {
-      if (!(failure instanceof PasscodeNeeded)) setRunPodMessage(failure.message, "bad");
+      setRunPodMessage(failure.message, "bad");
     } finally {
       button.disabled = false;
     }
@@ -2262,7 +2283,7 @@ async function podAction(button, path, done, hint = "") {
     setRunPodMessage(done, "ok");
     checkConnection();
   } catch (failure) {
-    if (!(failure instanceof PasscodeNeeded)) setRunPodMessage(`${failure.message} ${hint}`.trim(), "bad");
+    setRunPodMessage(`${failure.message} ${hint}`.trim(), "bad");
   } finally {
     button.disabled = false;
   }
@@ -2283,7 +2304,7 @@ function setupComfyUI() {
     try {
       renderTarget(await api("/api/connection", { method: "PUT", json: { target: event.target.value } }));
     } catch (failure) {
-      if (!(failure instanceof PasscodeNeeded)) setRunPodMessage(failure.message, "bad");
+      setRunPodMessage(failure.message, "bad");
       loadComfyUI();
     }
     checkConnection();
@@ -2294,37 +2315,6 @@ function setupComfyUI() {
     setLocalMessage("Testing…", "");
     await checkConnection();
     button.disabled = false;
-  });
-}
-
-/* Passcode */
-
-function askPasscode() {
-  clearTimeout(state.pollTimer);
-  for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
-  show("view-passcode");
-  $("#passcode-form input[name=passcode]").focus();
-}
-
-function setupPasscode() {
-  const form = $("#passcode-form");
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const error = $(".form-error", form);
-    const response = await fetch("/api/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ passcode: form.elements.passcode.value }),
-    }).catch(() => null);
-    if (response && response.ok) {
-      form.reset();
-      error.hidden = true;
-      route();
-      checkConnection();
-    } else {
-      error.textContent = response ? "That passcode didn't work." : "Couldn't reach Rigless. Is it still running?";
-      error.hidden = false;
-    }
   });
 }
 
@@ -2339,7 +2329,6 @@ function init() {
   setupGenerate();
   setupCompare();
   setupComfyUI();
-  setupPasscode();
   $(".rename-title").addEventListener("click", () => editName(pageTitle, state.project));
   document.addEventListener("click", (event) => {
     const link = event.target.closest("a[data-link]");

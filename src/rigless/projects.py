@@ -25,6 +25,7 @@ Typical usage example:
 import dataclasses
 import hashlib
 import json
+import logging
 import queue
 import random
 import re
@@ -45,6 +46,7 @@ from PIL import Image
 from rigless import config, describe, pose, selection, sheet, swap, video_prep
 from rigless.selection import Anchor
 
+logger = logging.getLogger(__name__)
 FPS = swap.FPS  # the footage is readied at H3's frame rate, so frames line up
 MAX_SIDE = 1280  # enough for the taps and tracking; H3 renders smaller
 OUTPUT_SIDE = 1920  # finished takes are pasted onto the footage at up to full HD
@@ -76,7 +78,6 @@ class Activity(TypedDict):
     label: str
     fraction: float | None
     started: str
-    eta_seconds: int | None
 
 
 class TakeState(TypedDict):
@@ -85,7 +86,6 @@ class TakeState(TypedDict):
     seed: int
     quality: str  # one of QUALITIES
     status: str
-    progress: float
     score: float | None
     frozen: bool
     mirrored: bool
@@ -148,7 +148,11 @@ Step = Callable[["Store", str], None]
 
 
 class Store:
-    """The app's projects on disk, safe to use from several threads."""
+    """The app's projects on disk, safe to use from several threads.
+
+    Attributes:
+        root: The folder holding one subfolder per project.
+    """
 
     def __init__(self, root: Path) -> None:
         """Opens the store, creating its folder if needed.
@@ -216,17 +220,23 @@ class Store:
             return self._read(project_id)
 
     def all(self) -> list[Project]:
-        """Returns every project, newest first."""
+        """Returns every readable project, newest first."""
         with self._lock:
             ids = sorted(
                 (path.name for path in self.root.iterdir() if _ID.fullmatch(path.name)),
                 reverse=True,
             )
-            return [
-                self._read(project_id)
-                for project_id in ids
-                if (self.root / project_id / "project.json").exists()
-            ]
+            found = []
+            for project_id in ids:
+                if not (self.root / project_id / "project.json").exists():
+                    continue
+                try:
+                    found.append(self._read(project_id))
+                except (OSError, ValueError):
+                    logger.warning(
+                        "Leaving out project %s: it can't be read", project_id
+                    )
+            return found
 
     def delete(self, project_id: str) -> None:
         """Deletes a project and all its files.
@@ -271,15 +281,15 @@ class Store:
         with self._lock:
             timing = self._timing()
             timing[key] = round(seconds, 1)
-            (self.root / "timing.json").write_text(
-                json.dumps(timing, indent=2), "utf-8"
-            )
+            _write_json(self.root / "timing.json", timing)
 
     def _timing(self) -> dict[str, float]:
-        path = self.root / "timing.json"
-        timing: dict[str, float] = (
-            json.loads(path.read_text("utf-8")) if path.exists() else {}
-        )
+        try:
+            timing: dict[str, float] = json.loads(
+                (self.root / "timing.json").read_text("utf-8")
+            )
+        except (OSError, ValueError):  # none yet, or unreadable: estimates start over
+            return {}
         return timing
 
     def recover(self) -> None:
@@ -298,10 +308,14 @@ class Store:
         return _upgrade(json.loads(path.read_text("utf-8")))
 
     def _write(self, project: Project) -> None:
-        path = self.root / project["id"] / "project.json"
-        temporary = path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(project, indent=2), "utf-8")
-        temporary.replace(path)
+        _write_json(self.root / project["id"] / "project.json", project)
+
+
+def _write_json(path: Path, value: Any) -> None:
+    """Writes value as JSON in one step, so a crash never leaves half a file."""
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(value, indent=2), "utf-8")
+    temporary.replace(path)
 
 
 class Worker:
@@ -323,9 +337,15 @@ class Worker:
             try:
                 step(self._store, project_id)
             except Exception as exc:  # a failed step ends the step, never the worker
-                self._store.set(
-                    project_id, status="failed", activity=None, error=explain(exc)
-                )
+                logger.exception("A step failed for project %s", project_id)
+                try:
+                    self._store.set(
+                        project_id, status="failed", activity=None, error=explain(exc)
+                    )
+                except Exception:
+                    logger.exception(
+                        "Couldn't record that project %s failed", project_id
+                    )
 
 
 def _new_person() -> Person:
@@ -366,12 +386,11 @@ def _upgrade(project: dict[str, Any]) -> Project:
 def prepare(store: Store, project_id: str) -> None:
     """Readies the whole footage at H3's frame rate for taps, then waits.
 
-    Finds the character on the sheet too, if one came with the footage.
+    Finds the character on the sheet too, if one came with the footage; a sheet
+    without a usable view only leaves a warning, since the footage is ready.
     """
     project = store.get(project_id)
     folder = store.folder(project_id)
-    if project["people"][0]["sheet"]:
-        _extract_views(store, project_id, 0)
     store.set(project_id, activity=activity("Getting the footage ready"))
     dance = folder / project["inputs"]["dance"]
     footage = folder / "footage.mp4"
@@ -398,8 +417,21 @@ def prepare(store: Store, project_id: str) -> None:
     video_prep.extract_frame(
         footage, min(start + POSTER_DELAY, stop - 1), folder / "poster.jpg"
     )
+    warnings = []
+    if project["people"][0]["sheet"]:
+        try:
+            views = _extract_views(store, project_id, 0)
+        except ValueError as error:
+            warnings.append(str(error))
+        else:
+            warnings += [views.warning] if views.warning else []
     store.set(
-        project_id, poster="poster.jpg", status="waiting", step="select", activity=None
+        project_id,
+        poster="poster.jpg",
+        status="waiting",
+        step="select",
+        activity=None,
+        warnings=warnings,
     )
 
 
@@ -506,12 +538,19 @@ def add_anchor(store: Store, project_id: str, person: int, anchor: Anchor) -> Pr
     return store.update(project_id, change)
 
 
-def remove_anchor(store: Store, project_id: str, person: int, frame: int) -> Project:
-    """Drops a person's taps on one frame, and any tracking made with them."""
+def remove_anchors(
+    store: Store, project_id: str, person: int, frame: int | None = None
+) -> Project:
+    """Drops a person's taps on one frame, or on every frame if frame is None.
+
+    Any tracking made with them goes too.
+    """
 
     def change(project: Project) -> None:
         taps = project["people"][person]
-        taps["anchors"] = [a for a in taps["anchors"] if a["frame"] != frame]
+        taps["anchors"] = [
+            a for a in taps["anchors"] if frame is not None and a["frame"] != frame
+        ]
         project["track"] = None
 
     return store.update(project_id, change)
@@ -590,8 +629,8 @@ def _track(store: Store, project_id: str) -> None:
     """Tracks each tapped person and records the masks, preview, and lost spans.
 
     A person whose taps haven't changed since they were last tracked keeps
-    their masks, and the preview is made again only if they all differ from
-    when it was made.
+    their masks, and the preview is made again when anyone's masks differ
+    from when it was made.
     """
     project = store.get(project_id)
     folder = store.folder(project_id)
@@ -777,6 +816,10 @@ def render(store: Store, project_id: str, options: Mapping[str, Any]) -> None:
         project_id: A project with footage, a character, and taps.
         options: The render request: "takes", and optionally "seeds" and
             "quality" (one of QUALITIES; "full" if not given).
+
+    Raises:
+        ValueError: A person has no taps in the trimmed part, or the pictures
+            or the clip look unsafe for work.
     """
     if store.get(project_id)["track"] is None:
         _track(store, project_id)
@@ -886,8 +929,8 @@ def render(store: Store, project_id: str, options: Mapping[str, Any]) -> None:
 def _best(takes: list[TakeState]) -> int | None:
     """The seed of the take to show first, or None if no take is done.
 
-    Like swap.pick_best, takes flagged frozen or mirrored come last; then full
-    quality comes before drafts, and the higher score before the lower.
+    Takes flagged frozen or mirrored come last; then full quality comes before
+    drafts, and the higher score before the lower.
     """
     done = [
         take for take in takes if take["status"] == "done" and take["score"] is not None
@@ -1077,7 +1120,7 @@ def _extract_views(store: Store, project_id: str, person: int) -> sheet.Views:
     folder = store.folder(project_id)
     theirs = project["people"][person]
     store.set(project_id, activity=activity("Finding the character on the sheet"))
-    images = [Image.open(folder / path).convert("RGB") for path in theirs["sheet"]]
+    images = [sheet.upright(Image.open(folder / path)) for path in theirs["sheet"]]
     views = sheet.extract(images)
     (folder / "views").mkdir(exist_ok=True)
     saved: dict[str, str | None] = {}
@@ -1165,22 +1208,14 @@ def explain(exc: Exception) -> str:
     return f"Something went wrong: {exc}"
 
 
-def activity(
-    label: str, fraction: float | None = None, started: str | None = None
-) -> Activity:
-    """Returns a new activity, started now unless started is given.
+def activity(label: str, fraction: float | None = None) -> Activity:
+    """Returns a new activity, started now.
 
     Args:
         label: What is being done, for the page.
         fraction: How much of it is done, 0 to 1, or None if unknown.
-        started: When it started, as an ISO time; None means now.
     """
-    return {
-        "label": label,
-        "fraction": fraction,
-        "started": started or _now(),
-        "eta_seconds": None,
-    }
+    return {"label": label, "fraction": fraction, "started": _now()}
 
 
 def _start_take(
@@ -1225,7 +1260,6 @@ def _queued_take(seed: int, quality: str) -> TakeState:
         "seed": seed,
         "quality": quality,
         "status": "queued",
-        "progress": 0.0,
         "score": None,
         "frozen": False,
         "mirrored": False,
@@ -1243,7 +1277,6 @@ def _finish_take(project: Project, index: int, take: swap.Take, folder: Path) ->
     """Records a finished take in the project's state."""
     state = project["takes"][index]
     state["seed"] = take.seed
-    state["progress"] = 1.0
     state["status"] = "failed" if take.error else "done"
     state["error"] = take.error
     if take.score is not None:

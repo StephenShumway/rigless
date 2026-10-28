@@ -146,7 +146,7 @@ def try_run(
 
     Returns:
         A tuple (job_id, error), where error is None on success and job_id is
-        None if the job failed.
+        None if the job itself failed.
     """
     try:
         job = run(client, graph, on_progress)
@@ -154,5 +154,8 @@ def try_run(
         return None, (f"{exc}: {exc.error}" if exc.error else str(exc))
     except ComfyError as exc:
         return None, str(exc)
-    download(job, outputs)
+    try:
+        download(job, outputs)
+    except RuntimeError as exc:  # the job finished without one of its outputs
+        return job.id, str(exc)
     return job.id, None

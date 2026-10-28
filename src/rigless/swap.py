@@ -15,17 +15,17 @@ Typical usage example:
   takes = list(render_takes(part, [masks], pictures, prompt=prompt([...]),
                             seeds=[1, 2], out_dir=run_dir,
                             sound=(dance, 2.0)))
-  best = pick_best(takes)
+  print([take.score for take in takes])
 """
 
 import json
 import re
 import time
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from functools import partial, reduce
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import cv2
 import numpy as np
@@ -130,17 +130,6 @@ class Take:
     def finished(self) -> Path:
         """The render with the clip's sound, the one to show."""
         return self.dir / "finished.mp4"
-
-
-def pick_best(takes: Iterable[Take]) -> Take | None:
-    """Returns the take that follows the performance best, or None if none succeeded.
-
-    Takes flagged frozen or mirrored are picked only when every take is.
-    """
-    scored = [take for take in takes if take.score is not None]
-    if not scored:
-        return None
-    return max(scored, key=lambda take: _rank(cast(TakeScore, take.score)))
 
 
 def _rank(score: TakeScore) -> tuple[bool, float]:
@@ -580,9 +569,9 @@ def render_takes(
     Each take's folder holds h3.mp4 (H3's render, with the lead-in), result.mp4
     (the same frames as part, scored), finished.mp4
     (pasted onto the full-size part if given, with the clip's sound: the one
-    to show), and run.json. A take that fails inside ComfyUI is yielded with
-    its error, and the next seed goes on. With several people, a take scores
-    as well as its least faithful person.
+    to show), and run.json. A take that fails, in ComfyUI or while it's being
+    finished, is yielded with its error, and the next seed goes on. With
+    several people, a take scores as well as its least faithful person.
 
     Args:
         part: The clip to swap in, silent, at 24 fps.
@@ -614,7 +603,7 @@ def render_takes(
     dancers = [pose.estimate_in(part, person_boxes) for person_boxes in boxes]
     frames = len(found)
     lead = min(LEAD_IN, frames - 1)
-    led = np.r_[np.arange(lead, 0, -1), np.arange(frames)]
+    led = video_prep.lead_in_order(frames, lead)  # the masks in part.mp4's order
     video_prep.write_video(
         found[led].astype(np.uint8) * 255, FPS, out_dir / "masks.mp4"
     )
@@ -642,22 +631,33 @@ def render_takes(
             render_seconds = round(time.monotonic() - started, 1)
             take_score = None
             if not error:
-                result = take_dir / "result.mp4"
-                video_prep.cut_frames(take_dir / "h3.mp4", result, lead, lead + frames)
-                take_score = _score(
-                    result, dancers, boxes, (found.shape[2], found.shape[1])
-                )
-                shown = result
-                if full:
-                    shown = take_dir / "pasted.mp4"
-                    scale = _scale(resolution)
-                    pad = round((PASTE_PAD + EXPAND) * scale)
-                    paste(result, full, found, shown, pad, FEATHER * scale)
-                # Without a soundtrack, the take's own (silent) one goes back on.
-                source, start = sound or (result, 0.0)
-                video_prep.add_audio(
-                    shown, source, start, take_dir / "finished.mp4", comment=AI_LABEL
-                )
+                try:
+                    result = take_dir / "result.mp4"
+                    video_prep.cut_frames(
+                        take_dir / "h3.mp4", result, lead, lead + frames
+                    )
+                    take_score = _score(
+                        result, dancers, boxes, (found.shape[2], found.shape[1])
+                    )
+                    shown = result
+                    if full:
+                        shown = take_dir / "pasted.mp4"
+                        scale = _scale(resolution)
+                        pad = round((PASTE_PAD + EXPAND) * scale)
+                        paste(result, full, found, shown, pad, FEATHER * scale)
+                    # Without a soundtrack, the take's own (silent) one goes back on.
+                    source, start = sound or (result, 0.0)
+                    video_prep.add_audio(
+                        shown,
+                        source,
+                        start,
+                        take_dir / "finished.mp4",
+                        comment=AI_LABEL,
+                    )
+                # ffmpeg, the pose model or a render with the wrong frame count.
+                except (RuntimeError, ValueError, OSError) as exc:
+                    take_score = None
+                    error = f"The take rendered, but finishing it failed: {exc}"
             record: dict[str, Any] = {
                 "model": MODEL,
                 "swap_lora": SWAP_LORA,

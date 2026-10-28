@@ -11,7 +11,7 @@ Typical usage example:
   from rigless import config
 
   target = config.connection()
-  client = Comfy(api_key=target.key)
+  print(target.target, target.url)  # comfy_client.connect() uses it, key and all
 """
 
 import json
@@ -27,8 +27,6 @@ load_dotenv(REPO_ROOT / ".env")
 
 # Only for downloading models from a private Hugging Face repository.
 HF_TOKEN = os.environ.get("HF_TOKEN") or None
-# Required to serve the app beyond this computer; None keeps it open locally.
-PASSCODE = os.environ.get("RIGLESS_PASSCODE") or None
 RUNS_DIR = REPO_ROOT / "runs"
 CONNECTION_FILE = RUNS_DIR / "app" / "connection.json"
 LOCAL_URL = "http://127.0.0.1:8189"  # comfy-api-proxy's default address

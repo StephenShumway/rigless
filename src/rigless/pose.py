@@ -6,12 +6,12 @@ layout. The models download once, on first use, to rtmlib's cache folder.
 
 Typical usage example:
 
-  track = estimate(Path("result.mp4"))
+  track = estimate_in(Path("result.mp4"), mask_boxes(masks))
   track.keypoints.shape  # (frames, 17, 2)
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 
@@ -27,9 +27,6 @@ SEEN = 0.3  # keypoint confidence above which a keypoint counts as found
 SURE = 0.6  # confidence above which a keypoint is surely the boxed person's
 SHOULDERS = [5, 6]
 HIPS = [11, 12]
-# Other people count when at least this tall relative to the main person; smaller
-# ones, like people seated far behind the dancer, don't get in the way.
-OTHERS_HEIGHT = 0.5
 BOX_PAD = 0.15  # how far a mask's box grows sideways and down, in mask sizes
 HEAD_ROOM = 0.5  # how far it grows upward: a mask can stop at the collar
 
@@ -43,15 +40,11 @@ class PoseTrack:
         scores: (frames, 17) keypoint confidences, all 0 in frames where
             nobody was found.
         fps: The video's frame rate.
-        others: Per frame, a (k, 4) array of (x1, y1, x2, y2) boxes of other
-            people at least half the main person's height, as of the
-            detector's latest run. Empty if other people weren't tracked.
     """
 
     keypoints: np.ndarray
     scores: np.ndarray
     fps: float
-    others: list[np.ndarray] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -69,16 +62,11 @@ class Person:
     scores: np.ndarray
 
 
-def estimate(video: Path, seconds: float | None = None) -> PoseTrack:
-    """Finds the main person's body keypoints in every frame of a video.
+def estimate(video: Path) -> PoseTrack:
+    """Finds the largest person's body keypoints in every frame of a video.
 
-    The main person is the largest one detected: the dancer, in a typical
-    phone clip with people in the background. Other people are tracked too,
-    by their boxes only.
-
-    Args:
-        video: The video to read.
-        seconds: Stop after this many seconds. None reads the whole video.
+    For whole takes with one person in them, as the scorer's validation test
+    uses; the app poses the tapped person with estimate_in instead.
 
     Raises:
         ValueError: The file is missing or isn't a readable video.
@@ -86,19 +74,16 @@ def estimate(video: Path, seconds: float | None = None) -> PoseTrack:
     model = _model()
     capture = cv2.VideoCapture(str(video))
     fps = capture.get(cv2.CAP_PROP_FPS)
-    frames = round(seconds * fps) if seconds is not None else None
     keypoints: list[np.ndarray] = []
     scores: list[np.ndarray] = []
-    others: list[np.ndarray] = []
-    box, nearby = None, np.empty((0, 4))
+    box = None
     try:
-        while frames is None or len(keypoints) < frames:
+        while True:
             ok, frame = capture.read()
             if not ok:
                 break
             if box is None or len(keypoints) % DETECT_EVERY == 0:
-                box, nearby = _people(model, frame)
-            others.append(nearby)
+                box = _largest_person(model, frame)
             if box is None:
                 keypoints.append(np.zeros((NUM_KEYPOINTS, 2)))
                 scores.append(np.zeros(NUM_KEYPOINTS))
@@ -111,7 +96,7 @@ def estimate(video: Path, seconds: float | None = None) -> PoseTrack:
         capture.release()
     if not keypoints or fps <= 0:
         raise ValueError(f"{video} is missing or isn't a readable video.")
-    return PoseTrack(np.stack(keypoints), np.stack(scores), fps, others)
+    return PoseTrack(np.stack(keypoints), np.stack(scores), fps)
 
 
 def estimate_in(video: Path, boxes: Sequence[np.ndarray | None]) -> PoseTrack:
@@ -251,23 +236,12 @@ def _model() -> Body:
     return body
 
 
-def _people(model: Body, frame: np.ndarray) -> tuple[np.ndarray | None, np.ndarray]:
-    """Detects the people in a frame.
-
-    Returns:
-        A tuple (main, others), where main is the (x1, y1, x2, y2) box of the
-        largest person, or None if nobody was found, and others is a (k, 4)
-        array of the boxes of other people at least OTHERS_HEIGHT as tall.
-    """
+def _largest_person(model: Body, frame: np.ndarray) -> np.ndarray | None:
+    """The (x1, y1, x2, y2) box of the largest person detected, or None."""
     boxes = model.det_model(frame)
     if len(boxes) == 0:
-        return None, np.empty((0, 4))
-    areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
-    main = np.argmax(areas)
-    heights = boxes[:, 3] - boxes[:, 1]
-    tall = heights >= OTHERS_HEIGHT * heights[main]
-    tall[main] = False
-    return boxes[main], boxes[tall]
+        return None
+    return boxes[np.argmax((boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]))]
 
 
 def _box_around(keypoints: np.ndarray, scores: np.ndarray) -> np.ndarray | None:

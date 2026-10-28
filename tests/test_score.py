@@ -82,6 +82,16 @@ def test_limbs_found_with_low_confidence_are_ignored() -> None:
     assert result.score > 99
 
 
+def test_arms_the_pose_model_misses_dont_make_a_take_frozen() -> None:
+    source = _figure(_swing(4, 30), np.pi - _swing(4, 30))
+    scores = source.scores.copy()
+    scores[:90, 7:11] = 0.1  # elbows and wrists unseen for 3 of the 4 seconds
+
+    result = score_take(source, PoseTrack(source.keypoints, scores, source.fps))
+
+    assert not result.frozen
+
+
 def test_frames_are_matched_by_time_across_frame_rates() -> None:
     source = _figure(_swing(4, 30), np.pi - _swing(4, 30), fps=30)
     output = _figure(_swing(4, 24), np.pi - _swing(4, 24), fps=24)

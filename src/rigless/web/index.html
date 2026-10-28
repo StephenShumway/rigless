@@ -64,6 +64,10 @@
         </span>
       </label>
       <div class="pictures" hidden></div>
+      <div class="taps" hidden>
+        <span class="muted taps-label"></span>
+        <button class="btn btn-ghost clear-taps" type="button">Clear taps</button>
+      </div>
       <div class="character-status" hidden>
         <p class="character-status-label" aria-live="polite"></p>
         <div class="meter"><span></span></div>
@@ -146,6 +150,7 @@
                 <video class="monitor-original" muted playsinline preload="auto" hidden></video>
                 <canvas class="overlay" aria-hidden="true"></canvas>
                 <button class="compare-hold pill" type="button" hidden>Hold to compare</button>
+                <button class="remove-tap pill" type="button" hidden>Remove this tap</button>
                 <span class="hud-tc pill" aria-hidden="true">00:00:00</span>
                 <p class="monitor-message pill" aria-live="polite"></p>
               </div>
@@ -305,21 +310,6 @@
       </form>
     </dialog>
 
-    <!-- Passcode, when the app is served beyond this computer -->
-    <section id="view-passcode" class="view" hidden>
-      <form id="passcode-form" class="closed-set">
-        <img class="brand-mark" src="/logo.svg" alt="">
-        <h1>This Rigless is private</h1>
-        <p class="muted">Enter the passcode to continue.</p>
-        <input type="text" name="username" value="rigless" autocomplete="username" hidden>
-        <label class="field">
-          <span class="label">Passcode</span>
-          <input name="passcode" type="password" autocomplete="current-password" required>
-        </label>
-        <p class="form-error" role="alert" hidden></p>
-        <button class="btn btn-primary" type="submit">Enter</button>
-      </form>
-    </section>
   </main>
 
 </body>

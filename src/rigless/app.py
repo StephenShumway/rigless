@@ -6,17 +6,16 @@ character, the trim, and the user's taps on the person to replace, and
 follows the project by polling its state; the work happens in
 `rigless.projects`. A shoot can replace several people, each with their
 own character and taps; requests about one of them name it by its place
-(`person`, from 0). Served beyond this computer
-(`--host 0.0.0.0`), the app requires the passcode in `.env`.
+(`person`, from 0). It only answers this computer, and only the page
+itself may change anything.
 
 Typical usage example:
 
   uv run rigless
-  uv run rigless --host 0.0.0.0 --port 8190 --no-browser
+  uv run rigless --port 8190 --no-browser
 """
 
 import argparse
-import hashlib
 import logging
 import re
 import secrets
@@ -25,14 +24,16 @@ import threading
 import webbrowser
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from PIL import Image, UnidentifiedImageError
-from pydantic import BaseModel, Field
+from PIL import Image
+from pydantic import BaseModel, Field, FiniteFloat
 from starlette.middleware.base import RequestResponseEndpoint
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from rigless import comfy_client, config, projects, runpod, terms, video_prep
 from rigless.projects import Person, Project, Store, Worker
@@ -43,10 +44,10 @@ WEB_DIR = Path(__file__).parent / "web"
 DEFAULT_PORT = 8190  # next to ComfyUI's 8188 and comfy-api-proxy's 8189
 VIDEO_TYPES = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
 IMAGE_TYPES = {".png", ".jpg", ".jpeg", ".webp"}
-SESSION_COOKIE = "rigless_session"
 SHOOT_TITLE = re.compile(r"Shoot (\d+)")
 MAX_FOOTAGE_SECONDS = 120  # trimmed in the app to at most video_prep.MAX_TRIM_SECONDS
-OPEN_PATHS = {"/api/status", "/api/login"}
+LOCAL_HOSTS = ["127.0.0.1", "localhost"]
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 # RunPod or ComfyUI refused a request. Not 502: Cloudflare, in front of quick
 # tunnels and RunPod's proxy, swaps a 502's body for its own page, reason and all.
 FAILED_DEPENDENCY = 424
@@ -55,12 +56,6 @@ CONNECTED = {
     "local": "Connected to ComfyUI on this computer.",
     "custom": "Connected to the ComfyUI set in COMFY_BASE_URL.",
 }
-
-
-class Login(BaseModel):
-    """A passcode entered on the page."""
-
-    passcode: str
 
 
 class ConnectionChoice(BaseModel):
@@ -72,7 +67,7 @@ class ConnectionChoice(BaseModel):
 class ProjectChange(BaseModel):
     """Changes to a project; None leaves a setting as it is."""
 
-    trim: tuple[float, float] | None = None
+    trim: tuple[FiniteFloat, FiniteFloat] | None = None
     description: str | None = None
     title: str | None = Field(None, max_length=80)
 
@@ -102,7 +97,10 @@ class RenderRequest(BaseModel):
     """
 
     takes: int = Field(1, ge=1, le=5)
-    seeds: list[int] | None = None
+    # The page matches takes by seed in JavaScript, which counts exactly to 2**53.
+    seeds: list[Annotated[int, Field(ge=0, lt=2**53)]] | None = Field(
+        None, max_length=5
+    )
     quality: Literal["draft", "full"] = "full"
 
 
@@ -114,43 +112,33 @@ def create_app(root: Path) -> FastAPI:
     store = Store(root)
     store.recover()
     worker = Worker(store)
+    deploying = threading.Lock()
     app = FastAPI(title="Rigless", docs_url=None, redoc_url=None)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=LOCAL_HOSTS)
 
     @app.middleware("http")
-    async def require_passcode(
+    async def page_only(
         request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
+        # A page on another site can still make the browser send requests here,
+        # as a form post naming that site as its Origin. Reading the answers
+        # takes DNS rebinding, which TrustedHostMiddleware refuses.
         path = request.url.path
-        guarded = path.startswith(("/api/", "/files/")) and path not in OPEN_PATHS
-        if guarded and not _logged_in(request):
-            return JSONResponse({"detail": "passcode"}, status_code=401)
+        origin = request.headers.get("origin")
+        if (
+            request.method not in SAFE_METHODS
+            and origin is not None
+            and urlsplit(origin).hostname not in LOCAL_HOSTS
+        ):
+            return JSONResponse(
+                {"detail": "Not from this app's page."}, status_code=403
+            )
         response = await call_next(request)
         if not path.startswith(("/api/", "/files/")):
             # The page's own files change with every update; browsers check them
             # each time (a cheap 304 when unchanged) instead of running stale ones.
             response.headers["Cache-Control"] = "no-cache"
         return response
-
-    @app.get("/api/status")
-    def status(request: Request) -> dict[str, bool]:
-        return {
-            "passcode_required": config.PASSCODE is not None,
-            "logged_in": _logged_in(request),
-        }
-
-    @app.post("/api/login", status_code=204)
-    def login(body: Login, response: Response) -> None:
-        if config.PASSCODE is None:
-            return
-        if not secrets.compare_digest(body.passcode, config.PASSCODE):
-            raise HTTPException(401, "passcode")
-        response.set_cookie(
-            SESSION_COOKIE,
-            _session(config.PASSCODE),
-            max_age=30 * 24 * 3600,
-            httponly=True,
-            samesite="strict",
-        )
 
     @app.get("/api/connection")
     def get_connection() -> dict[str, Any]:
@@ -294,26 +282,33 @@ def create_app(root: Path) -> FastAPI:
         theirs = _person(_project(store, project_id), person)
         folder = store.folder(project_id)
         adding = append.lower() == "true"
-        kept = theirs["sheet"] if adding else []
+        new: list[str] = []
+
+        def use(paths: list[str], removed: list[str]) -> None:
+            def change(state: Project) -> None:
+                state["people"][person]["sheet"] = paths
+                state["people"][person]["removed_pictures"] = removed
+
+            store.update(project_id, change)
+
+        # The old pictures go only once the new ones have worked.
+        try:
+            for image in sheet:
+                # Random names, so several people's uploads never overwrite each other.
+                new.append(_save_image(image, folder, f"sheet-{secrets.token_hex(6)}"))
+            kept = theirs["sheet"] if adding else []
+            use(kept + new, theirs["removed_pictures"] if adding else [])
+            project = projects.set_character(store, project_id, person)
+        except ValueError as exc:
+            for path in new:
+                (folder / path).unlink(missing_ok=True)
+            use(theirs["sheet"], theirs["removed_pictures"])
+            store.set(project_id, activity=None)
+            raise HTTPException(400, str(exc)) from exc
         if not adding:
             for old in theirs["sheet"]:
                 (folder / old).unlink(missing_ok=True)
-        try:
-            # Random names, so several people's uploads never overwrite each other.
-            paths = kept + [
-                _save_image(image, folder, f"sheet-{secrets.token_hex(6)}")
-                for image in sheet
-            ]
-
-            def change(state: Project) -> None:
-                state["people"][person]["sheet"] = paths
-                if not adding:
-                    state["people"][person]["removed_pictures"] = []
-
-            store.update(project_id, change)
-            return projects.set_character(store, project_id, person)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+        return project
 
     @app.delete("/api/projects/{project_id}/pictures/{picture_id}", response_model=None)
     def remove_picture(project_id: str, picture_id: str, person: int = 0) -> Project:
@@ -359,21 +354,29 @@ def create_app(root: Path) -> FastAPI:
     @app.delete("/api/projects/{project_id}/anchors/{frame}", response_model=None)
     def remove_anchor(project_id: str, frame: int, person: int = 0) -> Project:
         _person(_idle_project(store, project_id), person)
-        return projects.remove_anchor(store, project_id, person, frame)
+        return projects.remove_anchors(store, project_id, person, frame)
+
+    @app.delete("/api/projects/{project_id}/anchors", response_model=None)
+    def clear_anchors(project_id: str, person: int = 0) -> Project:
+        _person(_idle_project(store, project_id), person)
+        return projects.remove_anchors(store, project_id, person)
 
     @app.post("/api/projects/{project_id}/track", status_code=202, response_model=None)
     def track(project_id: str) -> Project:
         project = _idle_project(store, project_id)
         if not any(person["anchors"] for person in project["people"]):
             raise HTTPException(400, "Tap the person to replace first.")
-        worker.submit(project_id, projects.track)
-        return store.set(
+        # Marked working before it's queued, so a step that fails at once isn't
+        # overwritten as working, stuck for good.
+        working = store.set(
             project_id,
             status="working",
             step="track",
             error=None,
             activity=projects.activity("Waiting for its turn"),
         )
+        worker.submit(project_id, projects.track)
+        return working
 
     @app.post("/api/projects/{project_id}/render", status_code=202, response_model=None)
     def render(project_id: str, body: RenderRequest) -> Project:
@@ -397,11 +400,7 @@ def create_app(root: Path) -> FastAPI:
             raise HTTPException(409, "Agree to the MiniMax H3 terms first.")
         options = body.model_dump()
         options["takes"] = max(body.takes, len(body.seeds or []))
-        worker.submit(
-            project_id,
-            lambda store, project_id: projects.render(store, project_id, options),
-        )
-        return store.set(
+        working = store.set(
             project_id,
             status="working",
             step="render",
@@ -409,6 +408,11 @@ def create_app(root: Path) -> FastAPI:
             render={"takes": options["takes"], "quality": body.quality},
             activity=projects.activity("Waiting for its turn"),
         )
+        worker.submit(
+            project_id,
+            lambda store, project_id: projects.render(store, project_id, options),
+        )
+        return working
 
     # The user's RunPod key lives in their browser and comes with each request.
     @app.get("/api/runpod")
@@ -422,11 +426,14 @@ def create_app(root: Path) -> FastAPI:
         env = {"PROXY_TOKEN": token}
         if config.HF_TOKEN:
             env["HF_TOKEN"] = config.HF_TOKEN
-        try:
-            created = runpod.start(key, body.gpu, env)
-        except runpod.RunPodError as exc:
-            raise _runpod_failed(exc) from exc
-        config.save_pod(runpod.proxy_url(created["id"]), token)
+        # One Deploy at a time: a second click would otherwise see no pod yet and
+        # start another, billed and forgotten.
+        with deploying:
+            try:
+                created = runpod.start(key, body.gpu, env)
+            except runpod.RunPodError as exc:
+                raise _runpod_failed(exc) from exc
+            config.save_pod(runpod.proxy_url(created["id"]), token)
         return _runpod_state(key)
 
     @app.post("/api/runpod/pause")
@@ -475,32 +482,14 @@ def create_app(root: Path) -> FastAPI:
 def main() -> None:
     """Starts the app and opens it in the browser."""
     parser = argparse.ArgumentParser(description="Run the Rigless web app.")
-    parser.add_argument("--host", default="127.0.0.1", help="address to listen on")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--no-browser", action="store_true", help="don't open it")
     args = parser.parse_args()
-    if args.host not in ("127.0.0.1", "localhost") and config.PASSCODE is None:
-        parser.error(
-            "Set RIGLESS_PASSCODE in .env before serving the app beyond this computer."
-        )
     app = create_app(config.RUNS_DIR / "app")
     if not args.no_browser:
         url = f"http://127.0.0.1:{args.port}"
         threading.Timer(1.5, webbrowser.open, [url]).start()
-    uvicorn.run(app, host=args.host, port=args.port)
-
-
-def _session(passcode: str) -> str:
-    """The session cookie's value for a passcode."""
-    return hashlib.sha256(f"rigless:{passcode}".encode()).hexdigest()
-
-
-def _logged_in(request: Request) -> bool:
-    """Whether the request may use the app: no passcode is set, or it has one."""
-    if config.PASSCODE is None:
-        return True
-    cookie = request.cookies.get(SESSION_COOKIE, "")
-    return secrets.compare_digest(cookie, _session(config.PASSCODE))
+    uvicorn.run(app, host="127.0.0.1", port=args.port)
 
 
 def _connection() -> dict[str, Any]:
@@ -640,7 +629,9 @@ def _save_image(upload: UploadFile, folder: Path, name: str) -> str:
     try:
         with Image.open(folder / path) as image:
             image.verify()
-    except (UnidentifiedImageError, OSError) as exc:
+    # Pillow reports a damaged PNG as a SyntaxError, a huge image as a bomb.
+    except (OSError, SyntaxError, Image.DecompressionBombError) as exc:
+        (folder / path).unlink(missing_ok=True)
         raise ValueError(f"{upload.filename} isn't a readable image.") from exc
     return path
 

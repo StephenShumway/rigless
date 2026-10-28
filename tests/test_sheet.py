@@ -1,3 +1,5 @@
+import io
+
 import numpy as np
 import pytest
 from PIL import Image
@@ -215,3 +217,26 @@ def test_clasped_hands_reference_is_warned() -> None:
     views = sheet.find_views(Image.open(path))
 
     assert sheet.pose_warning(sheet.pick_front(views)) is not None
+
+
+def test_a_phone_photo_is_turned_the_way_it_is_shown() -> None:
+    photo = Image.new("RGB", (20, 40))
+    exif = photo.getexif()
+    exif[0x0112] = 6  # stored sideways; shown turned 90 degrees clockwise
+    photo.info["exif"] = exif.tobytes()
+    photo = _reloaded(photo, "JPEG")
+
+    assert sheet.upright(photo).size == (40, 20)
+
+
+def test_transparent_parts_become_the_white_backdrop() -> None:
+    cutout = Image.new("RGBA", (4, 4), (0, 0, 0, 0))
+
+    assert sheet.upright(cutout).getpixel((0, 0)) == (255, 255, 255)
+
+
+def _reloaded(image: Image.Image, format: str) -> Image.Image:
+    buffer = io.BytesIO()
+    image.save(buffer, format, exif=image.info.get("exif", b""))
+    buffer.seek(0)
+    return Image.open(buffer)

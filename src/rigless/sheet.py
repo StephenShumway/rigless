@@ -25,7 +25,7 @@ from dataclasses import dataclass
 
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 from rigless import pose
 
@@ -43,7 +43,8 @@ LEFT_HIP, RIGHT_HIP = 11, 12
 LEFT_ANKLE, RIGHT_ANKLE = 15, 16
 
 
-@dataclass(frozen=True)
+# Compared and hashed by identity: two figures are never the same one.
+@dataclass(frozen=True, eq=False)
 class View:
     """One figure on a character sheet.
 
@@ -84,6 +85,22 @@ class Views:
     others: tuple[Image.Image, ...] = ()
 
 
+def upright(image: Image.Image) -> Image.Image:
+    """Returns an RGB copy of the image as it's shown, on white where transparent.
+
+    A phone photo is often stored sideways with a tag saying how to turn it;
+    a cutout's transparent backdrop would otherwise read as whatever color
+    the hidden pixels hold, often black.
+    """
+    turned = ImageOps.exif_transpose(image)
+    if "A" not in turned.getbands() and "transparency" not in turned.info:
+        return turned.convert("RGB")
+    rgba = turned.convert("RGBA")
+    flat = Image.new("RGB", rgba.size, "white")
+    flat.paste(rgba, mask=rgba.getchannel("A"))
+    return flat
+
+
 def extract(images: list[Image.Image]) -> Views:
     """Picks and cuts out the views, pooled across a sheet or several images.
 
@@ -91,27 +108,25 @@ def extract(images: list[Image.Image]) -> Views:
         ValueError: No image shows the character's whole body.
     """
     found = [(image, find_views(image)) for image in images]
-    owners = {id(view): (image, views) for image, views in found for view in views}
+    owners = {view: (image, views) for image, views in found for view in views}
     pooled = [view for _, views in found for view in views]
 
     def cut(view: View | None) -> Image.Image | None:
         if view is None:
             return None
-        image, views = owners[id(view)]
+        image, views = owners[view]
         return crop(image, views, view)
 
     front = pick_front(pooled)
     close_up = pick_close_up(pooled)
     back = pick_back(pooled)
-    picked = {id(view) for view in (front, close_up, back) if view is not None}
+    picked = {view for view in (front, close_up, back) if view is not None}
     return Views(
-        crop(*owners[id(front)], front),
+        crop(*owners[front], front),
         cut(close_up),
         cut(back),
         pose_warning(front),
-        tuple(
-            crop(*owners[id(view)], view) for view in pooled if id(view) not in picked
-        ),
+        tuple(crop(*owners[view], view) for view in pooled if view not in picked),
     )
 
 

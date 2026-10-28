@@ -4,7 +4,8 @@ MiniMax H3 and its text encoder and VAEs come from Comfy-Org/MiniMax-H3, the
 FL2V Turbo 8-step LoRA from lightx2v/Minimax-h3-Turbo, SAM 3.1 from
 Comfy-Org/sam3.1, Qwen3-VL-8B (the describer) from Comfy-Org/Qwen-Image-2.1,
 and the Rigless Swap LoRA from its own repository. About 60GB in all. Files
-already present are skipped, and an interrupted download resumes. HF_TOKEN in
+already present are skipped, and an interrupted download resumes, here (a few
+tries per file) or on the next run. HF_TOKEN in
 `.env` is sent along if set, for a private repository.
 
 Typical usage example:
@@ -14,6 +15,7 @@ Typical usage example:
 """
 
 import argparse
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -25,6 +27,8 @@ TURBO = "https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/main"
 SAM = "https://huggingface.co/Comfy-Org/sam3.1/resolve/main"
 QWEN21 = "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main"
 SWAP_LORA_REPO = "https://huggingface.co/StephenShumway/rigless-lora/resolve/main"
+TIMEOUT = 60  # seconds without data before a download counts as stalled
+TRIES = 3
 
 # Each model is (download URL, subfolder of ComfyUI's models folder).
 MODELS = [
@@ -70,14 +74,19 @@ def check(url: str) -> None:
 
 
 def download(url: str, dest: Path) -> None:
-    """Downloads one model to dest, resuming a partial dest.part if present."""
+    """Downloads one model to dest, resuming a partial dest.part if present.
+
+    Raises:
+        OSError: The download failed or stopped early; dest.part is kept.
+    """
     part = dest.with_name(dest.name + ".part")
     start = part.stat().st_size if part.exists() else 0
     resume = {"Range": f"bytes={start}-"} if start else {}
-    with urllib.request.urlopen(request(url, **resume)) as response:
+    with urllib.request.urlopen(request(url, **resume), timeout=TIMEOUT) as response:
         if response.status != 206:
             start = 0  # The server sent the whole file, so start over.
-        total = start + int(response.headers.get("Content-Length", 0))
+        length = response.headers.get("Content-Length")
+        total = start + int(length or 0)
         done = start
         with part.open("ab" if start else "wb") as file:
             while chunk := response.read(1 << 20):
@@ -87,6 +96,9 @@ def download(url: str, dest: Path) -> None:
                     f"\r  {done / 1e9:6.2f} / {total / 1e9:.2f}GB", end="", flush=True
                 )
     print()
+    # A dropped connection can end the response early without an error.
+    if length is not None and done != total:
+        raise OSError(f"{dest.name} stopped at {done} of {total} bytes")
     part.rename(dest)
 
 
@@ -103,7 +115,15 @@ def main() -> None:
             continue
         print(f"get  {folder}/{dest.name}")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        download(url, dest)
+        for attempt in range(1, TRIES + 1):
+            try:
+                download(url, dest)
+                break
+            except OSError as error:
+                if attempt == TRIES:
+                    raise
+                print(f"  {error}; trying again")
+                time.sleep(5)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Starts ComfyUI, reachable only inside the pod, and the token-protected
-# comfy-api-proxy on port 8189, which RunPod exposes over HTTPS; with
-# RIGLESS_PASSCODE set, also the web app on port 8190. setup.sh ends by running
-# this; run it again after restarting anything by hand.
+# comfy-api-proxy on port 8189, which RunPod exposes over HTTPS. setup.sh ends
+# by running this; run it again after restarting anything by hand.
 #
 # Usage, on the pod:
 #   bash deploy/runpod/start.sh
@@ -24,7 +23,8 @@ if ! curl -sf http://127.0.0.1:8188/system_stats > /dev/null; then
   [ -f "$LOGS/comfyui.log" ] && mv "$LOGS/comfyui.log" "$LOGS/comfyui.previous.log"
   nohup "$VENV/bin/python" "$COMFY/main.py" --listen 127.0.0.1 --port 8188 \
     --disable-pinned-memory > "$LOGS/comfyui.log" 2>&1 &
-  for _ in $(seq 90); do
+  # Up to 10 minutes: a first start on a network disk took 4.5 (Oct 28).
+  for _ in $(seq 300); do
     curl -sf http://127.0.0.1:8188/system_stats > /dev/null && break
     sleep 2
   done
@@ -43,14 +43,3 @@ done
 "$VENV/bin/comfy-api-proxy" start --comfyui http://127.0.0.1:8188 \
   --host 0.0.0.0 --port 8189 --token "$PROXY_TOKEN"
 echo "Ready. Set COMFY_BASE_URL=https://${RUNPOD_POD_ID:-<pod id>}-8189.proxy.runpod.net"
-
-# The web app on port 8190, only with a passcode. It reaches ComfyUI through the proxy.
-if [ -n "${RIGLESS_PASSCODE:-}" ]; then
-  REPO=$(cd "$(dirname "$0")/../.." && pwd)
-  pkill -f "[r]igless --host" || true
-  COMFY_BASE_URL=http://127.0.0.1:8189 COMFY_API_KEY="$PROXY_TOKEN" \
-    UV_PROJECT_ENVIRONMENT=/workspace/rigless-venv UV_PYTHON_INSTALL_DIR=/workspace/uv/python \
-    nohup uv run --project "$REPO" --no-dev rigless \
-    --host 0.0.0.0 --port 8190 --no-browser > "$LOGS/app.log" 2>&1 &
-  echo "App: https://${RUNPOD_POD_ID:-<pod id>}-8190.proxy.runpod.net"
-fi

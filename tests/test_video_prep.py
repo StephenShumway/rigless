@@ -1,5 +1,5 @@
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import cv2
@@ -26,8 +26,14 @@ def test_trim_past_the_clip_end_stops_at_the_end() -> None:
 
 @pytest.mark.parametrize(
     ("start", "end"),
-    [(31.0, None), (3.0, 3.5), (5.0, 2.0), (0.0, 25.0)],
-    ids=["starts after the clip", "too short", "ends before it starts", "too long"],
+    [(31.0, None), (3.0, 3.5), (5.0, 2.0), (0.0, 25.0), (2.0, float("nan"))],
+    ids=[
+        "starts after the clip",
+        "too short",
+        "ends before it starts",
+        "too long",
+        "ends at no time",
+    ],
 )
 def test_trims_that_cannot_be_rendered_are_refused(
     start: float, end: float | None
@@ -65,6 +71,28 @@ def test_extracted_frame_is_the_one_asked_for(tmp_path: Path) -> None:
     frame = cv2.imread(str(tmp_path / "frame.png"), cv2.IMREAD_GRAYSCALE)
     assert frame is not None
     assert frame.mean() == pytest.approx(70, abs=4)
+
+
+def test_asking_for_a_frame_past_the_end_fails_even_over_an_old_image(
+    tmp_path: Path,
+) -> None:
+    video = tmp_path / "short.mp4"
+    video_prep.write_video(np.zeros((4, 16, 16), np.uint8), 24, video)
+    video_prep.extract_frame(video, 1, tmp_path / "frame.png")
+
+    with pytest.raises(RuntimeError):
+        video_prep.extract_frame(video, 9, tmp_path / "frame.png")
+
+
+def test_frames_that_fail_part_way_leave_no_video_behind(tmp_path: Path) -> None:
+    def frames() -> Iterator[np.ndarray]:
+        yield np.zeros((16, 16, 3), np.uint8)
+        raise ValueError("the take broke")
+
+    with pytest.raises(ValueError):
+        video_prep.write_frames(frames(), 24, (16, 16), tmp_path / "take.mp4")
+
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_added_sound_never_shortens_the_video(
@@ -109,3 +137,4 @@ def test_lead_in_plays_the_opening_backward_then_the_whole_clip(tmp_path: Path) 
         for frame in video_prep.iter_frames(tmp_path / "led.mp4")
     ]
     assert levels == [3, 2, 1, 0, 1, 2, 3, 4, 5]
+    assert levels == video_prep.lead_in_order(6, 3).tolist()  # the masks' order

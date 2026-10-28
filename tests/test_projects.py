@@ -8,7 +8,7 @@ import pytest
 from comfy_sdk import Progress
 from PIL import Image
 
-from rigless import describe, projects, selection, swap, video_prep
+from rigless import describe, pose, projects, selection, swap, video_prep
 from rigless.projects import Person, Project, Store, TakeState
 from rigless.score import TakeScore
 
@@ -43,6 +43,30 @@ def _renderable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Store,
     video_prep.write_video(blank, 24.0, folder / "inputs" / "dance.mp4")
     monkeypatch.setattr(describe, "unsafe", lambda *_: False)
     return store, project_id
+
+
+def test_footage_is_ready_for_taps_even_when_the_sheet_has_no_full_body_view(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(pose, "find_people", lambda image: [])  # nobody on the sheet
+    store = Store(tmp_path)
+    project_id = store.create(trim=(0.0, 1.0))["id"]
+    folder = store.folder(project_id)
+    blank = np.zeros((24, 16, 16, 3), np.uint8)
+    video_prep.write_video(blank, 24.0, folder / "inputs" / "dance.mp4")
+    Image.new("RGB", (32, 32), "white").save(folder / "inputs" / "sheet-0.png")
+
+    def given(state: Project) -> None:
+        state["inputs"]["dance"] = "inputs/dance.mp4"
+        state["people"][0]["sheet"] = ["inputs/sheet-0.png"]
+
+    store.update(project_id, given)
+
+    projects.prepare(store, project_id)
+
+    state = store.get(project_id)
+    assert (state["status"], state["step"]) == ("waiting", "select")
+    assert any("full-body" in warning for warning in state["warnings"])
 
 
 def test_render_times_a_take_by_its_sampler_steps_only(
@@ -108,7 +132,6 @@ def _take(seed: int, quality: str, status: str, score: float | None) -> TakeStat
         "seed": seed,
         "quality": quality,
         "status": status,
-        "progress": 1.0,
         "score": score,
         "frozen": False,
         "mirrored": False,
@@ -232,3 +255,14 @@ def test_pictures_are_dealt_out_in_turn_up_to_what_h3_takes(
     counts: list[int], expected: list[int]
 ) -> None:
     assert projects.allot(counts, 9) == expected
+
+
+def test_an_unreadable_shoot_is_left_out_instead_of_breaking_the_list(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    good = store.create()["id"]
+    (tmp_path / "20261001-120000").mkdir()
+    (tmp_path / "20261001-120000" / "project.json").write_text("{ cut off", "utf-8")
+
+    assert [project["id"] for project in store.all()] == [good]

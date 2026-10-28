@@ -11,7 +11,9 @@ Typical usage example:
           max_side=1280)
 """
 
+import contextlib
 import itertools
+import math
 import subprocess
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
@@ -80,6 +82,8 @@ def check_trim(start: float, end: float | None, duration: float) -> tuple[float,
         ValueError: The part starts outside the clip, or is too short or too long.
     """
     end = duration if end is None else min(end, duration)
+    if not math.isfinite(end):
+        raise ValueError("The trim's end isn't a time.")
     if not 0 <= start < duration:
         raise ValueError("The trim starts outside the clip.")
     length = end - start
@@ -170,6 +174,7 @@ def extract_frame(video: Path, index: int, dest: Path) -> None:
     Raises:
         RuntimeError: ffmpeg failed, or the video has no such frame.
     """
+    dest.unlink(missing_ok=True)
     _ffmpeg(
         "-v", "error", "-y", "-i", str(video), "-vf", f"select='eq(n,{index})'",
         "-frames:v", "1", "-fps_mode", "passthrough", str(dest),
@@ -190,11 +195,16 @@ def reverse(src: Path, dest: Path) -> None:
     )  # fmt: skip
 
 
+def lead_in_order(length: int, frames: int) -> np.ndarray:
+    """Returns the frame indices lead_in plays for a clip of length frames."""
+    return np.r_[np.arange(frames, 0, -1), np.arange(length)]
+
+
 def lead_in(clip: Path, frames: int, fps: float, dest: Path) -> None:
     """Writes a clip led by its first frames played backward, without its audio.
 
     The result starts on frame `frames`, plays back to frame 1, then plays the
-    whole clip, so the motion never jumps.
+    whole clip, so the motion never jumps: the order of lead_in_order.
 
     Args:
         clip: The video.
@@ -231,18 +241,26 @@ def write_video(frames: np.ndarray, fps: float, dest: Path) -> None:
     """
     count, height, width = frames.shape[:3]
     pixels = "gray" if frames.ndim == 3 else "rgb24"
-    _ffmpeg(
-        "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", pixels,
-        "-s", f"{width}x{height}", "-r", str(fps), "-i", "-",
-        "-frames:v", str(count), "-c:v", "libx264", "-crf", "12",
-        "-pix_fmt", "yuv420p", str(dest),
-        stdin=np.ascontiguousarray(frames, np.uint8).tobytes(),
-    )  # fmt: skip
+    with _replacing(dest) as partial:
+        _ffmpeg(
+            "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", pixels,
+            "-s", f"{width}x{height}", "-r", str(fps), "-i", "-",
+            "-frames:v", str(count), "-c:v", "libx264", "-crf", "12",
+            "-pix_fmt", "yuv420p", str(partial),
+            stdin=np.ascontiguousarray(frames, np.uint8).tobytes(),
+        )  # fmt: skip
 
 
 def read_frames(video: Path) -> np.ndarray:
-    """Decodes a whole video as (frames, height, width, 3) BGR uint8 pixels."""
-    return np.stack(list(iter_frames(video)))
+    """Decodes a whole video as (frames, height, width, 3) BGR uint8 pixels.
+
+    Raises:
+        ValueError: The video has no frames, or can't be read.
+    """
+    frames = list(iter_frames(video))
+    if not frames:
+        raise ValueError(f"{video.name} has no frames.")
+    return np.stack(frames)
 
 
 def iter_frames(video: Path) -> Iterator[np.ndarray]:
@@ -273,25 +291,46 @@ def write_frames(
         RuntimeError: ffmpeg failed.
     """
     width, height = size
-    command = [
-        imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-v", "error", "-y",
-        "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}",
-        "-r", str(fps), "-i", "-", "-c:v", "libx264", "-crf", "16",
-        "-pix_fmt", "yuv420p", str(dest),
-    ]  # fmt: skip
-    process = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
-    assert process.stdin and process.stderr  # both piped above
+    with _replacing(dest) as partial:
+        command = [
+            imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-v", "error", "-y",
+            "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}",
+            "-r", str(fps), "-i", "-", "-c:v", "libx264", "-crf", "16",
+            "-pix_fmt", "yuv420p", str(partial),
+        ]  # fmt: skip
+        process = subprocess.Popen(
+            command, stdin=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        assert process.stdin and process.stderr  # both piped above
+        try:
+            for frame in frames:
+                # ffmpeg's BGR input shifts colors a few levels; its RGB input doesn't.
+                process.stdin.write(
+                    np.ascontiguousarray(frame[..., ::-1], np.uint8).tobytes()
+                )
+        except BrokenPipeError:
+            pass  # ffmpeg stopped reading; its log says why
+        finally:
+            with contextlib.suppress(BrokenPipeError):
+                process.stdin.close()
+            log = process.stderr.read().decode("utf-8", errors="replace")
+            returncode = process.wait()
+        if returncode != 0:
+            raise RuntimeError(f"ffmpeg failed: {log.strip()}")
+
+
+@contextlib.contextmanager
+def _replacing(dest: Path) -> Iterator[Path]:
+    """Yields a path to write instead of dest, moved onto dest only on success.
+
+    A video cut short by an error or a crash then never stands in for a whole one.
+    """
+    partial = dest.with_name(f"{dest.stem}.partial{dest.suffix}")
     try:
-        for frame in frames:
-            # ffmpeg's BGR input shifts colors by a few levels; its RGB input doesn't.
-            process.stdin.write(
-                np.ascontiguousarray(frame[..., ::-1], np.uint8).tobytes()
-            )
+        yield partial
+        partial.replace(dest)
     finally:
-        process.stdin.close()
-        log = process.stderr.read().decode("utf-8", errors="replace")
-    if process.wait() != 0:
-        raise RuntimeError(f"ffmpeg failed: {log.strip()}")
+        partial.unlink(missing_ok=True)
 
 
 def _ffmpeg(*args: str, stdin: bytes | None = None) -> str:

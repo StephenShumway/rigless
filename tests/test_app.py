@@ -8,17 +8,14 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from rigless import config, projects, runpod, selection, sheet
+from rigless import config, projects, runpod, selection, sheet, terms
 from rigless.app import create_app
 from rigless.config import Connection
 from rigless.projects import Person, Project, Store
 
-PASSCODE = "open sesame"
-
 
 @pytest.fixture
 def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setattr(config, "PASSCODE", None)
     monkeypatch.setattr(config, "CONNECTION_FILE", tmp_path / "connection.json")
     monkeypatch.setattr(config, "CUSTOM_URL", None)
     monkeypatch.setattr(config, "CUSTOM_KEY", None)
@@ -27,31 +24,30 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def client(root: Path) -> TestClient:
-    return TestClient(create_app(root))
+    return TestClient(create_app(root), base_url="http://127.0.0.1:8190")
 
 
-def test_passcode_guards_the_api_but_not_the_page(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+def test_requests_naming_another_host_are_refused(client: TestClient) -> None:
+    # What a page on another site gets after DNS rebinding its own name to 127.0.0.1.
+    response = client.get("/api/projects", headers={"Host": "attacker.example:8190"})
+
+    assert response.status_code == 400
+
+
+def test_changes_sent_from_another_site_are_refused(
+    root: Path, client: TestClient
 ) -> None:
-    monkeypatch.setattr(config, "PASSCODE", PASSCODE)
+    response = client.post("/api/terms", headers={"Origin": "https://attacker.example"})
 
-    assert client.get("/api/projects").status_code == 401
-    assert client.get("/files/20261020-120000/x.png").status_code == 401
-    assert client.get("/api/status").json() == {
-        "passcode_required": True,
-        "logged_in": False,
-    }
-    assert client.get("/").status_code == 200
+    assert response.status_code == 403
+    assert not terms.accepted(root)
 
 
-def test_right_passcode_opens_the_api(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(config, "PASSCODE", PASSCODE)
+def test_the_page_itself_can_make_changes(root: Path, client: TestClient) -> None:
+    response = client.post("/api/terms", headers={"Origin": "http://localhost:8190"})
 
-    assert client.post("/api/login", json={"passcode": "guess"}).status_code == 401
-    assert client.post("/api/login", json={"passcode": PASSCODE}).status_code == 204
-    assert client.get("/api/projects").status_code == 200
+    assert response.status_code == 204
+    assert terms.accepted(root)
 
 
 def test_project_files_stay_inside_the_project(root: Path, client: TestClient) -> None:
@@ -187,6 +183,19 @@ def test_taps_for_a_person_who_isnt_there_are_refused(
     assert response.status_code == 404
 
 
+def test_seeds_cannot_ask_for_more_takes_than_the_limit(
+    root: Path, client: TestClient
+) -> None:
+    project_id = _ready_project(root)
+    client.post("/api/terms")
+
+    response = client.post(
+        f"/api/projects/{project_id}/render", json={"takes": 1, "seeds": list(range(6))}
+    )
+
+    assert response.status_code == 422
+
+
 def test_render_waits_for_the_h3_terms(root: Path, client: TestClient) -> None:
     project_id = _ready_project(root)
 
@@ -298,6 +307,41 @@ def test_removed_picture_stays_out_when_more_are_added(
 
     assert len(after) == 2
     assert removed not in {picture["id"] for picture in after}
+
+
+@pytest.mark.usefixtures("one_view_per_image")
+def test_a_failed_character_replacement_keeps_the_old_pictures(
+    root: Path, client: TestClient
+) -> None:
+    project_id = _swap_project(root)
+    url = f"/api/projects/{project_id}/character"
+    old = client.post(url, files=[("sheet", ("a.png", _png(), "image/png"))]).json()
+    old_sheet = old["people"][0]["sheet"]
+
+    response = client.post(url, files=[("sheet", ("b.gif", b"GIF89a", "image/gif"))])
+
+    assert response.status_code == 400
+    assert client.get(f"/api/projects/{project_id}").json()["people"] == old["people"]
+    assert all((root / project_id / path).is_file() for path in old_sheet)
+
+
+def test_a_damaged_picture_is_refused_and_the_shoot_cleaned_up(
+    client: TestClient, make_video: Callable[..., Path]
+) -> None:
+    picture = bytearray(_png())
+    picture[-13] ^= 0xFF  # the image data's checksum, just before the end chunk
+    clip = make_video(64, 64).read_bytes()
+
+    response = client.post(
+        "/api/projects",
+        files=[
+            ("dance", ("dance.mp4", clip, "video/mp4")),
+            ("sheet", ("sheet.png", bytes(picture), "image/png")),
+        ],
+    )
+
+    assert response.status_code == 400
+    assert client.get("/api/projects").json() == []
 
 
 @pytest.mark.usefixtures("one_view_per_image")
@@ -452,3 +496,38 @@ def test_a_new_pick_clears_the_last_failure(
     )
 
     assert (response.json()["status"], response.json()["error"]) == ("waiting", None)
+
+
+def _tapped(root: Path, frames: list[int]) -> str:
+    project_id = _swap_project(root)
+
+    def tap(state: Project) -> None:
+        state["people"][0]["anchors"] = [
+            {"frame": frame, "positive": [[5, 5]], "negative": [], "mask": "m.png"}
+            for frame in frames
+        ]
+
+    Store(root).update(project_id, tap)
+    return project_id
+
+
+def test_removing_one_tap_keeps_the_others_and_drops_the_tracking(
+    root: Path, client: TestClient
+) -> None:
+    project_id = _tapped(root, [10, 100])
+
+    project = client.delete(f"/api/projects/{project_id}/anchors/100").json()
+
+    assert [anchor["frame"] for anchor in project["people"][0]["anchors"]] == [10]
+    assert project["track"] is None
+
+
+def test_clearing_a_persons_taps_removes_every_one(
+    root: Path, client: TestClient
+) -> None:
+    project_id = _tapped(root, [10, 100])
+
+    project = client.delete(f"/api/projects/{project_id}/anchors?person=0").json()
+
+    assert project["people"][0]["anchors"] == []
+    assert project["track"] is None

@@ -639,6 +639,17 @@ body.dragging .monitor[data-state="empty"] .monitor-frame { border-color: var(--
   touch-action: none;
 }
 .compare-hold.active { background: var(--accent-fill); color: var(--text-inverse); }
+.remove-tap {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  border: 0;
+  font-family: var(--font);
+  font-size: 13px;
+  cursor: pointer;
+}
+.taps { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.taps .btn { flex: none; }
 .monitor-message {
   position: absolute;
   left: 50%;
@@ -977,22 +988,6 @@ body.dragging .monitor[data-state="empty"] .monitor-frame { border-color: var(--
 }
 .drop-shade p { padding: 10px 18px; border-radius: var(--radius-pill); background: var(--accent-fill); color: var(--text-inverse); font-weight: 500; }
 body.dragging .drop-shade { display: grid; }
-
-/* Passcode */
-
-.closed-set {
-  display: grid;
-  gap: 14px;
-  max-width: 360px;
-  margin: 14vh auto 0;
-  padding: 24px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  background: var(--surface-card);
-}
-.closed-set .brand-mark { width: 28px; height: 28px; }
-.closed-set h1 { font-size: 22px; }
-.closed-set .btn { justify-self: start; }
 
 /* Narrow screens: the viewer on top, the two panels side by side under it (one
    column on a phone), and the page scrolls. */

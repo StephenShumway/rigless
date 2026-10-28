@@ -7,7 +7,7 @@ videos with different frame rates compare correctly.
 
 Typical usage example:
 
-  result = score_take(pose.estimate(driving), pose.estimate(take))
+  result = score_take(pose.estimate_in(part, boxes), pose.estimate_in(take, boxes))
   print(result.score, result.frozen)
 """
 
@@ -44,7 +44,7 @@ class TakeScore:
     Attributes:
         score: Overall accuracy from 0 to 100.
         per_frame: Accuracy of each compared frame from 0 to 100, NaN where no
-            limb was found in both videos. Drops show chunk seams.
+            limb was found in both videos.
         energy_ratio: Median, over the seconds the dancer's arms move, of how
             much the character's arms move relative to the dancer's; 1.0 means
             equally. None if the dancer's arms never move.
@@ -191,11 +191,14 @@ def _energy_ratio(
     """Compares arm movement second by second while the dancer's arms move.
 
     The median ignores a single unrelated gesture, so a take that stands still
-    except for one random arm raise still reads as frozen.
+    except for one random arm raise still reads as frozen. Only arms found in
+    both videos count, so ones the pose model misses in the take don't read as
+    standing still.
     """
+    both = src_seen & out_seen
     src_turning, out_turning = (
-        _arm_turning(src_dirs, src_seen),
-        _arm_turning(out_dirs, out_seen),
+        _arm_turning(src_dirs, both),
+        _arm_turning(out_dirs, both),
     )
     window = max(1, round(fps))
     ratios = []

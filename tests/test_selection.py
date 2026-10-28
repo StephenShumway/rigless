@@ -5,8 +5,6 @@ import pytest
 
 from rigless.pose import NUM_KEYPOINTS, Person, PoseTrack
 from rigless.selection import (
-    TINT_ALPHA,
-    TINTS,
     Anchor,
     Segment,
     assemble,
@@ -178,13 +176,21 @@ def test_no_body_taps_unless_seen_hips_are_left_out(
     assert body_taps([_person(hips)], mask) == ()
 
 
+def test_no_body_taps_on_a_bystander_when_the_tapped_person_isnt_found() -> None:
+    bystander = _person()
+    bystander.box[:] = [30.0, 0.0, 40.0, 40.0]  # none of the head mask is inside
+
+    assert body_taps([bystander], HEAD) == ()
+
+
 def test_taps_on_a_tapped_frame_join_the_users_taps() -> None:
     mine = Anchor(0, ((5, 5),), ((9, 9),))
+    extra = [Anchor(0, ((6, 6),), ((8, 8),)), Anchor(12, ((7, 7),))]
 
-    merged = merge([mine, _anchor(30)], [Anchor(0, ((6, 6),)), Anchor(12, ((7, 7),))])
+    merged = merge([mine, _anchor(30)], extra)
 
     assert sorted(merged, key=lambda a: a.frame) == [
-        Anchor(0, ((5, 5), (6, 6)), ((9, 9),)),
+        Anchor(0, ((5, 5), (6, 6)), ((9, 9), (8, 8))),
         Anchor(12, ((7, 7),)),
         _anchor(30),
     ]
@@ -197,9 +203,7 @@ def test_tint_blends_each_person_in_their_colour_and_leaves_the_rest() -> None:
 
     out = tint(frames, [first, None, third])
 
-    def blended(color: tuple[int, int, int]) -> list[int]:
-        return [int(100 * (1 - TINT_ALPHA) + c * TINT_ALPHA + 0.5) for c in color]
-
-    assert out[0, 0, 0].tolist() == blended(TINTS[0])
-    assert out[0, 1, 1].tolist() == blended(TINTS[2])
+    # 100 blended 45% toward TINTS[0] and TINTS[2].
+    assert out[0, 0, 0].tolist() == [120, 157, 154]
+    assert out[0, 1, 1].tolist() == [123, 130, 159]
     assert out[0, 0, 1].tolist() == out[0, 1, 0].tolist() == [100, 100, 100]

@@ -1,11 +1,11 @@
 """Choosing the person to replace: taps on a frame, then tracking through the clip.
 
-The user pauses the footage on a frame where the person is clear, taps them,
-and can tap anything the mask wrongly takes in as "not them". SAM 3.1 turns the
-taps into a mask on that frame. The taps on one frame make an anchor. Tracking
-follows the person from each anchor to the next, and back from the first anchor
-to the start of the clip, so where tracking slips the user adds an anchor at
-that moment.
+The user pauses the footage on a frame where the person is clear and taps
+them; SAM 3.1 turns the taps into a mask on that frame. The taps on one frame
+make an anchor, which can also hold "not them" taps (the page sends only the
+user's one tap). Tracking follows the person from each anchor to the next, and
+back from the first anchor to the start of the clip, so where tracking slips
+the user adds an anchor at that moment.
 
 Typical usage example:
 
@@ -193,7 +193,8 @@ def body_taps(people: Sequence[Person], mask: np.ndarray) -> tuple[Point, ...]:
 
     A tap on someone's face can make SAM mask just the head, and H3 then draws
     the character's face on the performer's body. The person is the one whose
-    detected box holds most of the mask. With their face, shoulders and hips
+    detected box holds most of the mask; with no such box there are no taps, as
+    they'd land on someone else. With their face, shoulders and hips
     seen, and nothing masked below the chest, the taps are their nose,
     shoulders, chest and hips; otherwise there are none. Unseen hips mean the
     body is out of frame or hidden behind someone, whom a chest tap would pull in.
@@ -205,6 +206,8 @@ def body_taps(people: Sequence[Person], mask: np.ndarray) -> tuple[Point, ...]:
     if not people or not mask.any():
         return ()
     person = max(people, key=lambda person: _inside_box(mask, person.box))
+    if 2 * _inside_box(mask, person.box) < mask.sum():
+        return ()
     points, scores = person.keypoints, person.scores
     if scores[NOSE] < SEEN or (scores[[*SHOULDERS, *HIPS]] < SURE).any():
         return ()
@@ -222,7 +225,9 @@ def merge(anchors: Sequence[Anchor], extra: Sequence[Anchor]) -> list[Anchor]:
     for tap in extra:
         mine = by_frame.get(tap.frame)
         by_frame[tap.frame] = (
-            Anchor(tap.frame, mine.positive + tap.positive, mine.negative)
+            Anchor(
+                tap.frame, mine.positive + tap.positive, mine.negative + tap.negative
+            )
             if mine
             else tap
         )
@@ -269,9 +274,9 @@ def tint(frames: np.ndarray, people: Sequence[np.ndarray | None]) -> np.ndarray:
     for masks, color in zip(people, TINTS, strict=False):
         if masks is None:
             continue
-        tint = np.array(color, np.float32) * TINT_ALPHA + 0.5  # + 0.5 rounds
+        shade = np.array(color, np.float32) * TINT_ALPHA + 0.5  # + 0.5 rounds
         for frame, mask in zip(out, masks, strict=True):
-            frame[mask] = (frame[mask] * (1 - TINT_ALPHA) + tint).astype(np.uint8)
+            frame[mask] = (frame[mask] * (1 - TINT_ALPHA) + shade).astype(np.uint8)
     return out
 
 
