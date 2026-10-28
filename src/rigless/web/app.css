@@ -566,9 +566,9 @@ body.dragging .pictures .picture-add { border-color: var(--accent-ring); }
 .form-error { color: var(--error); font-size: 13px; }
 
 .status { display: grid; gap: 8px; }
-.status-line { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 2px 8px; }
+.status-line { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; }
 .status-label { font-size: 13px; font-weight: 500; }
-.status-time { grid-column: 2; color: var(--text-secondary); font: 12px var(--mono); }
+.status-time { color: var(--text-secondary); font: 12px var(--mono); white-space: nowrap; }
 .status-time:empty { display: none; }
 
 .meter { position: relative; height: 4px; border-radius: 2px; background: var(--surface-active); overflow: hidden; }

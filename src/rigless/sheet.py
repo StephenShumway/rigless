@@ -11,8 +11,9 @@ Figures are found by the pose estimator's person detector, and their pixels by
 color distance from the backdrop, which must be plain and roughly uniform. The
 keypoints tell the views apart: a full-body view shows the ankles, and the
 signed widths of the shoulders and hips show which way a figure faces (the
-person's left shoulder is on the image's right when they face the camera). A
-full-body photo of one person works too; it is its own front view.
+person's left shoulder is on the image's right when they face the camera). Only
+a sheet is cut into views: a photo of one person is used whole, whatever its
+backdrop.
 
 Typical usage example:
 
@@ -131,13 +132,24 @@ def extract(images: list[Image.Image]) -> Views:
     )
 
 
+def cut_views(image: Image.Image) -> list[Image.Image]:
+    """Cuts every figure out of one image, as extract cuts them."""
+    views = find_views(image)
+    return [crop(image, views, view) for view in views]
+
+
 def find_views(sheet: Image.Image) -> list[View]:
     """Finds every figure on a character sheet, on the CPU.
 
-    Detections that cover no foreground pixels are dropped.
+    A photo of one person is one view, the whole photo. On a sheet of several
+    figures, detections that cover no foreground pixels are dropped.
     """
     image = np.asarray(sheet.convert("RGB"))
     people = pose.find_people(image)
+    if len(people) == 1:
+        # A photo's backdrop needn't be plain, so its figure isn't cut out by color.
+        whole = np.ones(image.shape[:2], bool)
+        return [View(_bounds(whole), whole, people[0].keypoints, people[0].scores)]
     masks = split(
         foreground(image),
         [person.keypoints[person.scores > FOUND] for person in people],

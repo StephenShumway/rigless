@@ -1,7 +1,8 @@
 """The user's RunPod GPU for Rigless: at most one pod, with its own disk.
 
 Deploy makes a pod wherever RunPod has the chosen GPU free, with a 100GB disk for
-ComfyUI, its environments and the models. The pod fetches the latest code, runs
+ComfyUI and the models (its environments go on the container disk, which a pause
+clears). The pod fetches the latest code, runs
 the setup (`deploy/runpod/setup.sh`, mostly downloads, reporting its progress on
 port 8189), and then serves ComfyUI behind comfy-api-proxy on that port. Pausing
 releases the GPU and keeps the disk (billed while paused) to resume in minutes.
@@ -30,13 +31,13 @@ GRAPHQL = "https://api.runpod.io/graphql"
 NAME = "rigless-app"  # only the app uses it, so a pod made by hand is never stopped
 # A pod RunPod moves to another machine on resume comes back as "<name>-migration-N".
 OURS = re.compile(rf"{re.escape(NAME)}(-migration-\d+)?")
-DISK_GB = 100  # ~67GB of models plus ComfyUI and two environments, ~85GB in all
+DISK_GB = 100  # ~67GB of models plus ComfyUI and its renders
+CONTAINER_DISK_GB = 50  # the two environments and uv's cache, ~15GB (Oct 28)
 MIN_VRAM_GB = 48  # the H3 swap's peak, with the text encoder released before sampling
 IDLE_PER_GB_MONTH = 0.20  # RunPod's price for a paused pod's disk (Oct 2026)
 HOURS_PER_MONTH = 730
-# A new pod's setup steps in order, with their typical seconds on an H100 whose disk
-# is network storage (Oct 28), for the time-left estimate. The download is timed by
-# its own speed instead.
+# A new pod's setup steps in order, with their seconds on a fast H100 pod (Oct 28),
+# for the time-left estimate. The download is timed by its own speed instead.
 SETUP_STEPS = {
     "comfyui": 30,
     "torch": 180,
@@ -155,7 +156,7 @@ def start(key: str, gpu: str, env: Mapping[str, str]) -> dict[str, Any]:
                 "minCudaVersion": MIN_CUDA,
                 "volumeInGb": DISK_GB,
                 "volumeMountPath": "/workspace",
-                "containerDiskInGb": 30,
+                "containerDiskInGb": CONTAINER_DISK_GB,
                 "ports": "8189/http,22/tcp",
                 "env": [{"key": name, "value": value} for name, value in env.items()],
                 "dockerArgs": f"bash -c '{BOOT}'",
@@ -210,8 +211,9 @@ def setup_progress(pod_url: str) -> dict[str, Any] | None:
     comfy-api-proxy takes over once ComfyUI is running.
 
     Returns:
-        The stage, one of SETUP_STEPS or "failed", and when it began
-        ("since", seconds since the epoch). For "models", also the bytes
+        The stage, one of SETUP_STEPS or "failed", when it began ("since",
+        seconds since the epoch), and when the setup began ("started"). For
+        "models", also the bytes
         downloaded ("done"), in all ("total"), and already there at "since"
         ("from").
     """
@@ -259,14 +261,25 @@ def setup_estimate(progress: Mapping[str, Any], now: float) -> dict[str, float]:
     if stage not in SETUP_STEPS:
         return {}
     since = float(progress.get("since", now))
+    started = since if progress.get("started") is None else float(progress["started"])
     done = float(progress.get("done", 0))
     speed = DOWNLOAD_SPEED
     fetched = done - float(progress.get("from", done))
     if stage == "models" and fetched > 0 and now > since:
         speed = fetched / (now - since)
-    seconds = {**SETUP_STEPS, "models": (progress.get("total") or MODELS_BYTES) / speed}
-    steps = list(seconds)
+    typical = {**SETUP_STEPS, "models": (progress.get("total") or MODELS_BYTES) / speed}
+    steps = list(typical)
     current = steps.index(stage)
+    # A pod's disk can make the installs ~9x slower than typical (Oct 28), so the
+    # steps are scaled by how slow this pod has been: in the steps it finished, or
+    # in all of them counting the current one as done, whichever is slower.
+    before = sum(typical[step] for step in steps[:current])
+    pace = max(
+        1.0,
+        (since - started) / before if before else 0.0,
+        (now - started) / (before + typical[stage]),
+    )
+    seconds = {step: t if step == "models" else pace * t for step, t in typical.items()}
     if stage == "models":
         spent = done / speed
     else:

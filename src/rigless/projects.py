@@ -33,7 +33,7 @@ import re
 import shutil
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -449,17 +449,21 @@ def prepare(store: Store, project_id: str) -> None:
     store.set(project_id, **ready)
 
 
-def set_character(store: Store, project_id: str, person: int) -> Project:
+def set_character(
+    store: Store, project_id: str, person: int, added: Collection[str] = ()
+) -> Project:
     """Finds a person's character on their sheet images, already saved in it.
 
     The project's warnings become the ones about this character. Its activity
     is left alone: this runs while the page waits, even during another step.
+    Pictures the user removed come back if they're on the sheet images in
+    added, the ones just uploaded.
 
     Raises:
         ValueError: No character was found on the images, or the project's
             people changed meanwhile.
     """
-    views = _extract_views(store, project_id, person)
+    views = _extract_views(store, project_id, person, added)
     return store.set(project_id, warnings=[views.warning] if views.warning else [])
 
 
@@ -1134,12 +1138,14 @@ def _tapped_person(folder: Path, anchor: dict[str, Any]) -> Image.Image:
         )
 
 
-def _extract_views(store: Store, project_id: str, person: int) -> sheet.Views:
+def _extract_views(
+    store: Store, project_id: str, person: int, added: Collection[str] = ()
+) -> sheet.Views:
     """Finds a person's character on their sheet and saves the views in the project.
 
     The pictures H3 gets are the front view, the face close-up, the back view,
-    then any other views, at most swap.MAX_PICTURES, leaving out the ones the
-    user removed.
+    then any other views, at most swap.MAX_PICTURES, each once, leaving out the
+    ones the user removed unless they're on the sheet images in added.
 
     Returns:
         The views found on the sheet.
@@ -1167,6 +1173,9 @@ def _extract_views(store: Store, project_id: str, person: int) -> sheet.Views:
             image.save(folder / path)
             saved[name] = path
     removed = set(theirs["removed_pictures"])
+    for path, image in zip(theirs["sheet"], images, strict=True):
+        if removed and path in added:
+            removed -= {_image_id(view) for view in sheet.cut_views(image)}
     pictures: list[dict[str, str]] = []
     candidates = [
         ("front", views.front),
@@ -1177,9 +1186,11 @@ def _extract_views(store: Store, project_id: str, person: int) -> sheet.Views:
     for role, image in candidates:
         if image is None:
             continue
-        # The same image always gets the same id, so a removed one stays removed.
+        # The same image always gets the same id, so a removed one stays removed
+        # and one uploaded twice is used once.
         picture_id = _image_id(image)
-        if picture_id in removed or len(pictures) == swap.MAX_PICTURES:
+        used = any(picture["id"] == picture_id for picture in pictures)
+        if used or picture_id in removed or len(pictures) == swap.MAX_PICTURES:
             continue
         name = f"views/picture-{picture_id}.png"
         image.save(folder / name)
@@ -1192,6 +1203,11 @@ def _extract_views(store: Store, project_id: str, person: int) -> sheet.Views:
             raise ValueError("The character changed meanwhile. Add the pictures again.")
         people[person]["views"] = saved
         people[person]["pictures"] = pictures
+        people[person]["removed_pictures"] = [
+            picture_id
+            for picture_id in theirs["removed_pictures"]
+            if picture_id in removed
+        ]
 
     store.update(project_id, change)
     return views

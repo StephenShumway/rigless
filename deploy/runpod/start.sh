@@ -12,7 +12,7 @@ set -euo pipefail
 : "${PROXY_TOKEN:?Set the pod environment variable PROXY_TOKEN.}"
 
 COMFY=/workspace/ComfyUI
-VENV=/workspace/venv
+VENV=/opt/venv
 LOGS=/workspace/logs
 mkdir -p "$LOGS"
 
@@ -23,9 +23,12 @@ if ! curl -sf http://127.0.0.1:8188/system_stats > /dev/null; then
   [ -f "$LOGS/comfyui.log" ] && mv "$LOGS/comfyui.log" "$LOGS/comfyui.previous.log"
   nohup "$VENV/bin/python" "$COMFY/main.py" --listen 127.0.0.1 --port 8188 \
     --disable-pinned-memory > "$LOGS/comfyui.log" 2>&1 &
-  # Up to 10 minutes: a first start on a network disk took 4.5 (Oct 28).
-  for _ in $(seq 300); do
+  comfy=$!
+  # Up to 30 minutes, or until it exits: a first start took 11.5 on a slow network
+  # disk (Oct 28), when the environments were on it too.
+  for _ in $(seq 900); do
     curl -sf http://127.0.0.1:8188/system_stats > /dev/null && break
+    kill -0 "$comfy" 2> /dev/null || break
     sleep 2
   done
   curl -sf http://127.0.0.1:8188/system_stats > /dev/null \

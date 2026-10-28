@@ -275,24 +275,34 @@ def test_recent_characters_skip_a_shoot_whose_pictures_are_gone(
     assert client.get("/api/characters").json() == []
 
 
-def _png() -> bytes:
+def _png(color: tuple[int, int, int] = (0, 0, 0)) -> bytes:
     buffer = io.BytesIO()
-    Image.new("RGB", (8, 8)).save(buffer, "PNG")
+    Image.new("RGB", (8, 8), color).save(buffer, "PNG")
     return buffer.getvalue()
+
+
+RED, GREEN, BLUE = (255, 0, 0), (0, 255, 0), (0, 0, 255)
+
+
+def _pictures(
+    *colors: tuple[int, int, int],
+) -> list[tuple[str, tuple[str, bytes, str]]]:
+    return [
+        ("sheet", (f"{i}.png", _png(color), "image/png"))
+        for i, color in enumerate(colors)
+    ]
 
 
 @pytest.fixture
 def one_view_per_image(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Stands in for the pose model: n images give a front view and n other
-    views, the same ones each time, each a different flat color."""
+    """Stands in for the pose model: each image is one view of the character,
+    the first image its front."""
 
     def extract(images: list[Image.Image]) -> sheet.Views:
-        views = [
-            Image.new("RGB", (8, 8), (40 * i, 0, 0)) for i in range(len(images) + 1)
-        ]
-        return sheet.Views(views[0], None, None, None, tuple(views[1:]))
+        return sheet.Views(images[0], None, None, None, tuple(images[1:]))
 
     monkeypatch.setattr(sheet, "extract", extract)
+    monkeypatch.setattr(sheet, "cut_views", lambda image: [image])
 
 
 @pytest.mark.usefixtures("one_view_per_image")
@@ -301,20 +311,37 @@ def test_removed_picture_stays_out_when_more_are_added(
 ) -> None:
     project_id = _swap_project(root)
     url = f"/api/projects/{project_id}"
-    pictures = client.post(
-        f"{url}/character", files=[("sheet", ("a.png", _png(), "image/png"))]
-    ).json()["people"][0]["pictures"]
+    pictures = client.post(f"{url}/character", files=_pictures(RED, GREEN)).json()[
+        "people"
+    ][0]["pictures"]
     removed = pictures[1]["id"]
 
     client.delete(f"{url}/pictures/{removed}")
     after = client.post(
-        f"{url}/character",
-        data={"append": "true"},
-        files=[("sheet", ("b.png", _png(), "image/png"))],
+        f"{url}/character", data={"append": "true"}, files=_pictures(BLUE)
     ).json()["people"][0]["pictures"]
 
     assert len(after) == 2
     assert removed not in {picture["id"] for picture in after}
+
+
+@pytest.mark.usefixtures("one_view_per_image")
+def test_a_removed_picture_comes_back_when_added_again(
+    root: Path, client: TestClient
+) -> None:
+    project_id = _swap_project(root)
+    url = f"/api/projects/{project_id}"
+    pictures = client.post(f"{url}/character", files=_pictures(RED, GREEN)).json()[
+        "people"
+    ][0]["pictures"]
+    removed = pictures[1]["id"]
+
+    client.delete(f"{url}/pictures/{removed}")
+    after = client.post(
+        f"{url}/character", data={"append": "true"}, files=_pictures(GREEN)
+    ).json()["people"][0]["pictures"]
+
+    assert [picture["id"] for picture in after] == [pictures[0]["id"], removed]
 
 
 @pytest.mark.usefixtures("one_view_per_image")
@@ -373,9 +400,9 @@ def test_a_damaged_picture_is_refused_and_the_shoot_cleaned_up(
 def test_last_picture_cannot_be_removed(root: Path, client: TestClient) -> None:
     project_id = _swap_project(root)
     url = f"/api/projects/{project_id}"
-    pictures = client.post(
-        f"{url}/character", files=[("sheet", ("a.png", _png(), "image/png"))]
-    ).json()["people"][0]["pictures"]
+    pictures = client.post(f"{url}/character", files=_pictures(RED, GREEN)).json()[
+        "people"
+    ][0]["pictures"]
 
     client.delete(f"{url}/pictures/{pictures[0]['id']}")
     response = client.delete(f"{url}/pictures/{pictures[1]['id']}")

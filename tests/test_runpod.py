@@ -112,5 +112,30 @@ def test_a_step_running_long_still_leaves_time() -> None:
     assert estimate["fraction"] < 1
 
 
+def test_time_left_grows_while_a_step_runs_long() -> None:
+    progress = {
+        "stage": "torch",
+        "started": 0.0,
+        "since": runpod.SETUP_STEPS["comfyui"],
+    }
+
+    sooner = runpod.setup_estimate(progress, now=1000.0)
+    later = runpod.setup_estimate(progress, now=2000.0)
+
+    assert later["seconds_left"] > sooner["seconds_left"]
+
+
+def test_a_slow_pod_stretches_the_steps_still_to_come() -> None:
+    steps = runpod.SETUP_STEPS
+    eight_times_slower = 8 * (steps["comfyui"] + steps["torch"])
+    progress = {"stage": "packages", "started": 0.0, "since": eight_times_slower}
+
+    estimate = runpod.setup_estimate(progress, now=eight_times_slower)
+
+    installs_left = steps["packages"] + steps["rigless"] + steps["start"]
+    download = runpod.MODELS_BYTES / runpod.DOWNLOAD_SPEED
+    assert estimate["seconds_left"] == pytest.approx(8 * installs_left + download)
+
+
 def test_a_failed_setup_has_no_estimate() -> None:
     assert runpod.setup_estimate({"stage": "failed"}, now=0.0) == {}

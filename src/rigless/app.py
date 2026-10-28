@@ -320,7 +320,7 @@ def create_app(root: Path) -> FastAPI:
                 new.append(_save_image(image, folder, f"sheet-{secrets.token_hex(6)}"))
             kept = theirs["sheet"] if adding else []
             use(kept + new, theirs["removed_pictures"] if adding else [])
-            project = projects.set_character(store, project_id, person)
+            project = projects.set_character(store, project_id, person, added=new)
         except ValueError as exc:
             for path in new:
                 (folder / path).unlink(missing_ok=True)

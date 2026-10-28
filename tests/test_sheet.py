@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from rigless import config, sheet
+from rigless import config, pose, sheet
 from rigless.sheet import View
 
 FIXTURES = config.REPO_ROOT / "local_fixtures"
@@ -123,6 +123,21 @@ def test_blob_without_keypoints_is_dropped() -> None:
 
     assert not figure[90:95, 60:95].any()
     assert figure[10:90, 10:40].all()
+
+
+def test_a_photo_of_one_person_is_used_whole(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Only the shirt stands out from the backdrop, as in a photo whose
+    # backdrop isn't plain.
+    photo = np.full((100, 60, 3), 180, np.uint8)
+    photo[10:50, 20:40] = (200, 0, 0)
+    person = pose.Person(
+        np.array([0, 0, 60, 100]), STANDING * 0.5 + (30, 25), np.ones(17)
+    )
+    monkeypatch.setattr(pose, "find_people", lambda image: [person])
+
+    views = sheet.extract([Image.fromarray(photo)])
+
+    np.testing.assert_array_equal(np.asarray(views.front), photo)
 
 
 def test_crop_paints_out_a_neighbor_in_the_margin() -> None:

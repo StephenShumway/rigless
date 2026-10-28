@@ -1108,6 +1108,11 @@ function selectPerson(index) {
 // New images join the selected person's character; a recent character replaces it.
 function chooseCharacter(files, { replace = false } = {}) {
   if (!files.length) return;
+  // A drop or paste can arrive mid-upload, and two uploads would race on the server.
+  if (state.project && state.sendingSheet) {
+    showError("Wait for the pictures being added, then add more.");
+    return;
+  }
   if (!replace && pictures().length >= MAX_PICTURES) {
     showError(`A character has up to ${MAX_PICTURES} pictures. Remove one to add another.`);
     return;

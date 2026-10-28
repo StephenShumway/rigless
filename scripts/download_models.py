@@ -55,6 +55,9 @@ def parse_args() -> argparse.Namespace:
     target.add_argument("--models-dir", type=Path, help="ComfyUI's models folder")
     target.add_argument("--check", action="store_true", help="only check every link")
     parser.add_argument("--progress", type=Path, help="a JSON file to keep updated")
+    parser.add_argument(
+        "--setup-started", type=float, help="when the pod's setup began, for --progress"
+    )
     return parser.parse_args()
 
 
@@ -146,7 +149,9 @@ def download(
     part.rename(dest)
 
 
-def fetch_all(models_dir: Path, progress: Path | None = None) -> None:
+def fetch_all(
+    models_dir: Path, progress: Path | None = None, setup_started: float | None = None
+) -> None:
     """Downloads every model that models_dir doesn't have yet.
 
     Args:
@@ -154,6 +159,8 @@ def fetch_all(models_dir: Path, progress: Path | None = None) -> None:
         progress: A file to keep updated, or None. It holds the bytes downloaded
             ("done"), in all ("total"), and already there ("from") when the
             downloads began ("since", seconds since the epoch).
+        setup_started: When the pod's setup began, kept in progress ("started")
+            for the app's time-left estimate, or None.
 
     Raises:
         OSError: A model failed to download after a few tries.
@@ -186,6 +193,7 @@ def fetch_all(models_dir: Path, progress: Path | None = None) -> None:
             "total": total,
             "since": started,
             "from": already,
+            "started": setup_started,
         }
         part = progress.with_name(progress.name + ".part")
         part.write_text(json.dumps(state))
@@ -223,7 +231,7 @@ def main() -> None:
         for url, _ in MODELS:
             check(url)
     else:
-        fetch_all(args.models_dir, args.progress)
+        fetch_all(args.models_dir, args.progress, args.setup_started)
 
 
 if __name__ == "__main__":
