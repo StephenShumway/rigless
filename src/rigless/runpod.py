@@ -34,6 +34,21 @@ DISK_GB = 100  # ~67GB of models plus ComfyUI and two environments, ~85GB in all
 MIN_VRAM_GB = 48  # the H3 swap's peak, with the text encoder released before sampling
 IDLE_PER_GB_MONTH = 0.20  # RunPod's price for a paused pod's disk (Oct 2026)
 HOURS_PER_MONTH = 730
+# A new pod's setup steps in order, with their typical seconds on an H100 whose disk
+# is network storage (Oct 28), for the time-left estimate. The download is timed by
+# its own speed instead.
+SETUP_STEPS = {
+    "comfyui": 30,
+    "torch": 180,
+    "packages": 260,
+    "rigless": 20,
+    "models": 0,
+    "start": 120,
+}
+MODELS_BYTES = 67.1e9  # what scripts/download_models.py fetches
+DOWNLOAD_SPEED = (
+    250e6  # bytes a second (Oct 28: ~280), until the download measures its own
+)
 # comfy-kitchen's fast int8 kernels need a CUDA 13 driver (12.8 is ~1.75x slower);
 # any 13.x will do, and RunPod's H100s run 13.2 (Oct 26).
 MIN_CUDA = "13.0"
@@ -195,8 +210,10 @@ def setup_progress(pod_url: str) -> dict[str, Any] | None:
     comfy-api-proxy takes over once ComfyUI is running.
 
     Returns:
-        The stage, "install", "models" or "start", with "done" and "total"
-        bytes for "models". "failed" means the setup stopped.
+        The stage, one of SETUP_STEPS or "failed", and when it began
+        ("since", seconds since the epoch). For "models", also the bytes
+        downloaded ("done"), in all ("total"), and already there at "since"
+        ("from").
     """
     request = urllib.request.Request(
         f"{pod_url}/progress.json", headers={"User-Agent": "rigless"}
@@ -233,6 +250,38 @@ def gpu_name(found: Mapping[str, Any]) -> str | None:
 def proxy_url(pod_id: str) -> str:
     """The address of a pod's comfy-api-proxy through RunPod's HTTPS proxy."""
     return f"https://{pod_id}-8189.proxy.runpod.net"
+
+
+def setup_estimate(progress: Mapping[str, Any], now: float) -> dict[str, float]:
+    """Roughly how far a new pod's setup has got, from the progress it reports.
+
+    Args:
+        progress: What setup_progress returned.
+        now: The current time, in seconds since the epoch.
+
+    Returns:
+        {"fraction": the share done, "seconds_left": the time still needed}, or
+        an empty dict for a stage it can't place, such as "failed".
+    """
+    stage = progress.get("stage")
+    if stage not in SETUP_STEPS:
+        return {}
+    since = float(progress.get("since", now))
+    done = float(progress.get("done", 0))
+    speed = DOWNLOAD_SPEED
+    fetched = done - float(progress.get("from", done))
+    if stage == "models" and fetched > 0 and now > since:
+        speed = fetched / (now - since)
+    seconds = {**SETUP_STEPS, "models": (progress.get("total") or MODELS_BYTES) / speed}
+    steps = list(seconds)
+    current = steps.index(stage)
+    if stage == "models":
+        spent = done / speed
+    else:
+        spent = min(now - since, 0.9 * seconds[stage])  # a slow step isn't over yet
+    finished = sum(seconds[step] for step in steps[:current]) + spent
+    left = seconds[stage] - spent + sum(seconds[step] for step in steps[current + 1 :])
+    return {"fraction": finished / (finished + left), "seconds_left": left}
 
 
 def _pod_id(key: str) -> str:

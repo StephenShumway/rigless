@@ -247,7 +247,7 @@
       </div>
       <div class="target-choice" role="radiogroup" aria-label="Where Rigless renders">
         <label><input type="radio" name="target" value="runpod"><span>RunPod</span></label>
-        <label><input type="radio" name="target" value="local"><span>This computer</span></label>
+        <label><input type="radio" name="target" value="local"><span>This Computer</span></label>
         <label><input type="radio" name="target" value="custom"><span>Custom</span></label>
       </div>
       <div class="dialog-body">
@@ -295,8 +295,8 @@
             <code class="muted custom-url"></code>
             <span class="pod-state custom-state"></span>
           </div>
-          <p class="muted custom-off">To render on ComfyUI anywhere else, set <code>COMFY_BASE_URL</code> in <code>.env</code> to its comfy-api-proxy address, and <code>COMFY_API_KEY</code> to the proxy's token if it has one. Then restart Rigless.</p>
-          <p class="muted custom-on" hidden>Set by <code>COMFY_BASE_URL</code> in <code>.env</code>. To choose RunPod or this computer here, remove it and restart Rigless.</p>
+          <p class="muted custom-off">To render on ComfyUI on another server, add its comfy-api-proxy address to <code>.env</code> as <code>COMFY_BASE_URL</code>. If the proxy has a token, add that as <code>COMFY_API_KEY</code>. Then restart Rigless.</p>
+          <p class="muted custom-on" hidden>Set by <code>COMFY_BASE_URL</code> in <code>.env</code>. To choose RunPod or This Computer here, remove it and restart Rigless.</p>
         </section>
       </div>
     </dialog>

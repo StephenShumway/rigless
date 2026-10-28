@@ -34,8 +34,8 @@ def connect() -> Comfy:
     target = config.connection()
     if target.url is None:
         raise ValueError(
-            "There's no RunPod pod. Deploy one on the ComfyUI tab, "
-            "or switch to This computer."
+            "There's no RunPod pod. Deploy one with the button at the top right, "
+            "or switch to This Computer."
         )
     # The SDK takes its target only from this variable and otherwise falls back
     # to Comfy Cloud, so pin it to ours.

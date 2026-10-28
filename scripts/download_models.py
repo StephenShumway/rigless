@@ -132,8 +132,9 @@ def fetch_all(models_dir: Path, progress: Path | None = None) -> None:
 
     Args:
         models_dir: ComfyUI's models folder.
-        progress: A file to keep updated, as {"stage": "models", "done": bytes,
-            "total": bytes}, or None.
+        progress: A file to keep updated, or None. It holds the bytes downloaded
+            ("done"), in all ("total"), and already there ("from") when the
+            downloads began ("since", seconds since the epoch).
 
     Raises:
         OSError: A model failed to download after a few tries.
@@ -148,6 +149,7 @@ def fetch_all(models_dir: Path, progress: Path | None = None) -> None:
     finished = sum(
         length for (_, dest), length in zip(wanted, sizes, strict=True) if dest.exists()
     )
+    started, already = time.time(), finished
     written = 0.0
 
     def report(done: int, now: bool = False) -> None:
@@ -155,7 +157,13 @@ def fetch_all(models_dir: Path, progress: Path | None = None) -> None:
         if progress is None or not now and time.monotonic() - written < PROGRESS_EVERY:
             return
         written = time.monotonic()
-        state = {"stage": "models", "done": finished + done, "total": total}
+        state = {
+            "stage": "models",
+            "done": finished + done,
+            "total": total,
+            "since": started,
+            "from": already,
+        }
         part = progress.with_name(progress.name + ".part")
         part.write_text(json.dumps(state))
         part.replace(progress)

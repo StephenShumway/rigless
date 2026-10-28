@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sets up a RunPod pod for Rigless and starts it: ComfyUI with the H3 Relay nodes, the
 # MiniMax H3 character-swap models, the app's environment, and comfy-api-proxy, all
-# under /workspace (the pod's disk). A new pod takes about 25 minutes, mostly
+# under /workspace (the pod's disk). A new pod takes about 15 minutes: installs, then
 # downloads (~67GB); a restarted one skips what's there and is up in a few minutes.
 # Safe to rerun: interrupted downloads resume.
 #
@@ -26,8 +26,9 @@ export UV_PYTHON_PREFERENCE=only-managed
 # Until comfy-api-proxy takes port 8189, the app reads the setup's progress there.
 PROGRESS=/workspace/logs/progress
 mkdir -p "$PROGRESS"
-echo '{"stage": "install"}' > "$PROGRESS/progress.json"
-trap 'echo "{\"stage\": \"failed\"}" > "$PROGRESS/progress.json"' ERR
+stage() { echo "{\"stage\": \"$1\", \"since\": $(date +%s)}" > "$PROGRESS/progress.json"; }
+stage comfyui
+trap 'stage failed' ERR
 pkill -f "[h]ttp.server 8189" || true
 nohup python3 -m http.server 8189 --directory "$PROGRESS" > /dev/null 2>&1 < /dev/null &
 
@@ -45,13 +46,16 @@ if [ ! -d "$COMFY/custom_nodes/h3-relay" ]; then
   git -C "$COMFY/custom_nodes/h3-relay" checkout --quiet "$H3_RELAY"
 fi
 [ -x "$VENV/bin/python" ] || uv venv --python 3.12 "$VENV"
+stage torch
 uv pip install --python "$VENV/bin/python" torch torchvision torchaudio \
   --index-url https://download.pytorch.org/whl/cu130
+stage packages
 uv pip install --python "$VENV/bin/python" -r "$COMFY/requirements.txt" scipy comfy-api-proxy==0.1.6
 
+stage rigless
 export UV_PROJECT_ENVIRONMENT=/workspace/rigless-venv
 uv sync --project "$REPO" --no-dev
 uv run --project "$REPO" --no-dev python "$REPO/scripts/download_models.py" \
   --models-dir "$COMFY/models" --progress "$PROGRESS/progress.json"
-echo '{"stage": "start"}' > "$PROGRESS/progress.json"
+stage start
 bash "$REPO/deploy/runpod/start.sh"

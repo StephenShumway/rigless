@@ -64,19 +64,19 @@ uv run rigless
 ```
 
 The app opens in your browser at `http://127.0.0.1:8190`. It only listens on your own
-computer. Then choose where it renders, on the ComfyUI tab:
+computer. Then choose where it renders with the button at the top right:
 
 ### RunPod (easiest)
 
 1. Make a [RunPod](https://www.runpod.io/) account, add credit, and create an API key.
 2. In the app, choose **RunPod**, paste the key (it stays in your browser), pick a GPU, and
    press **Deploy**. Rigless rents a GPU in your account and sets it up: ComfyUI, the models
-   (about 67 GB) and a token-protected connection. The first setup takes about 20 minutes.
-3. **Pause** when you're done: RunPod stops billing the GPU and keeps the disk (about $20 a
-   month for its 100 GB), and **Resume** brings it back in a few minutes. **Delete** removes
+   (about 67 GB) and a token-protected connection. The first setup takes about 15 minutes, and the app shows its progress.
+3. **Pause** when you're done: RunPod stops billing the GPU and keeps the disk (about $0.03
+   an hour for its 100 GB), and **Resume** brings it back in a few minutes. **Delete** removes
    both.
 
-### This computer
+### This Computer
 
 For an NVIDIA GPU with 48 GB or more in your own machine:
 
@@ -88,24 +88,27 @@ For an NVIDIA GPU with 48 GB or more in your own machine:
 3. Start ComfyUI, then the proxy that Rigless talks to:
    `uv run comfy-api-proxy start --comfyui http://127.0.0.1:8188` (it listens on
    `127.0.0.1:8189`).
-4. In the app, choose **This computer**.
+4. In the app, choose **This Computer**.
 
 `deploy/runpod/setup.sh` does all of this on Linux and is the exact recipe.
 
-### Any other GPU server
+### Custom (any other GPU server)
 
 On any Linux machine with a suitable GPU (another cloud, a lab server), clone this repo and
 run `PROXY_TOKEN=<a long random value> bash deploy/runpod/setup.sh`. It installs everything
-under `/workspace` and starts the proxy on port 8189 with that token; expose the port over
-HTTPS. Then add to `.env` in your local copy of Rigless:
+under `/workspace` and starts the proxy on port 8189, protected by that token. Expose the
+port over HTTPS. Then copy `.env.example` to `.env` in your local copy of Rigless and fill
+in two lines:
 
 ```bash
-COMFY_BASE_URL=https://your-server:8189
-COMFY_API_KEY=<the same token>
+COMFY_BASE_URL=https://your-server:8189  # where the proxy is
+COMFY_API_KEY=<the same token>           # what the proxy checks on every request
 ```
 
-The app shows the connection as **Custom**. Remove the two lines to choose RunPod or this
-computer again.
+These are the Comfy SDK's standard names. `COMFY_API_KEY` is only needed because the proxy
+has a token; a proxy started without one (only sensible on a private network) needs just
+`COMFY_BASE_URL`. Restart Rigless and it renders there, shown as **Custom**. Remove the
+lines to choose RunPod or This Computer again.
 
 ## How it works
 

@@ -269,7 +269,7 @@ function setTitle(text) {
 
 /* Connection status in the top bar: where Rigless renders and whether it answers */
 
-const TARGET_NAMES = { runpod: "RunPod", local: "This computer", custom: "Custom" };
+const TARGET_NAMES = { runpod: "RunPod", local: "This Computer", custom: "Custom" };
 
 async function checkConnection() {
   // Only the latest check counts, so switching back and forth never shows an older answer.
@@ -305,7 +305,7 @@ function showConnecting(target) {
   if (target !== "runpod") setTargetState(target, "checking");
 }
 
-// The status line on the This computer and Custom tabs.
+// The status line on the This Computer and Custom tabs.
 function setTargetState(target, tone, message = "") {
   const line = $(`.${target}-state`);
   line.className = `pod-state ${target}-state ${tone}`;
@@ -2300,40 +2300,59 @@ function renderRunPod(runpod) {
 }
 
 // A pod is setting up, ready, or paused. Pausing keeps its disk, billed while idle.
+// The card is updated in place, so its spinner keeps turning and its meter slides
+// instead of starting over at every poll.
 function renderPod(pod) {
+  const card = $("#runpod .pod-status");
+  if (!$(".pod-gpu", card)) {
+    card.replaceChildren(
+      el("strong", { class: "pod-gpu" }),
+      el("span", { class: "muted" }, el("span", { class: "pod-price" }), el("span", { class: "pod-uptime" })),
+      el("span", { class: "pod-state" }, el("span", { class: "state-text" })),
+      el("div", { class: "meter", hidden: true }, el("span")),
+      el("code", { class: "muted pod-ssh", title: "The setup log is /workspace/logs/setup.log" }),
+    );
+  }
   const idle = `$${pod.idle_cost_per_hour.toFixed(2)}/hr`;
   state.podStarted = !pod.paused && pod.started ? new Date(pod.started) : null;
-  const parts = [
-    el("strong", {}, pod.gpu || "Your pod"),
-    el("span", { class: "muted" }, pod.paused ? idle : `$${(pod.cost_per_hour || 0).toFixed(2)}/hr`,
-      el("span", { class: "pod-uptime" })),
-    podState(pod),
-  ];
-  if (pod.ssh && !pod.paused) parts.push(el("code", { class: "muted", title: "The setup log is /workspace/logs/setup.log" }, pod.ssh));
-  $("#runpod .pod-status").replaceChildren(...parts);
+  $(".pod-gpu", card).textContent = pod.gpu || "Your pod";
+  $(".pod-price", card).textContent = pod.paused ? idle : `$${(pod.cost_per_hour || 0).toFixed(2)}/hr`;
   tickPod();
+
+  const { tone, busy, text, fraction } = podState(pod);
+  const line = $(".pod-state", card);
+  line.className = `pod-state ${tone}`;
+  const turning = $(".spinner", line);
+  if (busy && !turning) line.prepend(spinner());
+  if (!busy && turning) turning.remove();
+  $(".state-text", line).textContent = text;
+  const meter = $(".meter", card);
+  meter.hidden = fraction === null;
+  if (fraction !== null) $("span", meter).style.width = `${Math.min(100, fraction * 100)}%`;
+
+  const ssh = $(".pod-ssh", card);
+  ssh.textContent = pod.ssh || "";
+  ssh.hidden = !pod.ssh || pod.paused;
   $(".pod-costs").textContent = pod.paused
     ? `Its disk keeps the models for ${idle} until you delete it. Resume brings it back in a few minutes if its machine's GPU is free.`
     : `Pause to stop paying for the GPU. The disk keeps the models for ${idle}, and the pod resumes in a few minutes. Delete removes everything.`;
 }
 
-// What a running pod is doing, from the progress its setup reports.
+// What a pod is doing, from the progress its setup reports while it sets up.
 function podState(pod) {
   const progress = pod.progress;
-  if (pod.paused) return el("span", { class: "pod-state" }, "Paused");
-  if (!progress && $("#connection").dataset.state === "ok") return el("span", { class: "pod-state ok" }, "Ready");
+  const shown = (text, { tone = "", busy = false, fraction = null } = {}) => ({ text, tone, busy, fraction });
+  if (pod.paused) return shown("Paused");
+  if (!progress && $("#connection").dataset.state === "ok") return shown("Ready", { tone: "ok" });
   if (progress?.stage === "failed") {
-    return el("span", { class: "pod-state bad" }, "The setup failed. Delete the pod and deploy a new one.");
+    return shown("The setup failed. Delete the pod and deploy a new one.", { tone: "bad" });
   }
-  if (progress?.stage === "models" && progress.total) {
-    const gb = (bytes) => (bytes / 1e9).toFixed(1);
-    const percent = Math.min(100, (progress.done / progress.total) * 100);
-    return el("div", { class: "pod-progress" },
-      el("span", { class: "pod-state" }, spinner(), `Downloading models: ${gb(progress.done)} of ${gb(progress.total)} GB`),
-      el("div", { class: "meter" }, el("span", { style: `width: ${percent}%` })));
+  if (progress?.fraction != null) {
+    const percent = Math.round(progress.fraction * 100);
+    return shown(`Setting up · ${percent}% · ${minutesLeft(progress.seconds_left)}`,
+      { busy: true, fraction: progress.fraction });
   }
-  const doing = { install: "Installing ComfyUI", models: "Downloading models", start: "Starting ComfyUI" };
-  return el("span", { class: "pod-state" }, spinner(), doing[progress?.stage] || "Starting the pod");
+  return shown(progress ? "Setting up" : "Starting the pod", { busy: true });
 }
 
 // Runs every second, so the uptime counts up between polls.

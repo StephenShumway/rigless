@@ -21,6 +21,7 @@ import re
 import secrets
 import shutil
 import threading
+import time
 import webbrowser
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -530,6 +531,9 @@ def _runpod_state(key: str) -> dict[str, Any]:
     if current.target == "runpod" and current.key and current.url != url:
         config.save_pod(url, current.key)
     paused = pod["desiredStatus"] == "EXITED"
+    progress = None if paused else runpod.setup_progress(url)
+    if progress is not None:
+        progress |= runpod.setup_estimate(progress, time.time())
     return {
         "pod": {
             "id": pod["id"],
@@ -540,7 +544,7 @@ def _runpod_state(key: str) -> dict[str, Any]:
             "started": pod.get("lastStartedAt"),
             "url": url,
             "ssh": runpod.ssh_command(pod),
-            "progress": None if paused else runpod.setup_progress(url),
+            "progress": progress,
         },
         "gpus": gpus,
     }

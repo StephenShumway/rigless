@@ -72,3 +72,32 @@ def test_deploy_lets_the_accounts_ssh_key_in(monkeypatch: pytest.MonkeyPatch) ->
 
     assert {"key": "PUBLIC_KEY", "value": "ssh-ed25519 AAAA user@pc"} in sent["env"]
     assert {"key": "PROXY_TOKEN", "value": "t"} in sent["env"]
+
+
+def test_time_left_follows_the_downloads_measured_speed() -> None:
+    progress = {
+        "stage": "models",
+        "done": 30e9,
+        "total": 60e9,
+        "since": 1000.0,
+        "from": 10e9,
+    }
+
+    estimate = runpod.setup_estimate(progress, now=1100.0)  # 20 GB in 100 s
+
+    left = 30e9 / 200e6 + runpod.SETUP_STEPS["start"]
+    assert estimate["seconds_left"] == pytest.approx(left)
+    assert 0.5 < estimate["fraction"] < 1
+
+
+def test_a_step_running_long_still_leaves_time() -> None:
+    progress = {"stage": "torch", "since": 0.0}
+
+    estimate = runpod.setup_estimate(progress, now=10_000.0)
+
+    assert estimate["seconds_left"] > 0
+    assert estimate["fraction"] < 1
+
+
+def test_a_failed_setup_has_no_estimate() -> None:
+    assert runpod.setup_estimate({"stage": "failed"}, now=0.0) == {}

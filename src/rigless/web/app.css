@@ -975,7 +975,7 @@ body.dragging .monitor[data-state="empty"] .monitor-frame { border-color: var(--
 .pod-state { flex-basis: 100%; display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
 .pod-state.ok { color: var(--success); }
 .pod-state.bad { color: var(--error); }
-.pod-progress { flex-basis: 100%; display: grid; gap: 10px; }
+.pod-status .meter { flex-basis: 100%; margin: 4px 0 2px; }
 .settings-message { color: var(--text-secondary); font-size: 13px; }
 .settings-message:empty { display: none; }
 .settings-message.ok { color: var(--success); }

@@ -72,8 +72,5 @@ def test_progress_counts_the_models_already_on_disk(
 
     script.fetch_all(tmp_path, progress)
 
-    assert json.loads(progress.read_text()) == {
-        "stage": "models",
-        "done": 7,
-        "total": 7,
-    }
+    state = json.loads(progress.read_text())
+    assert (state["done"], state["total"], state["from"]) == (7, 7, 3)
