@@ -10,8 +10,12 @@
 #
 # Needs a GPU with 48GB or more, a driver for CUDA 13 (comfy-kitchen's fast int8
 # kernels need it), the pod environment variable PROXY_TOKEN, and port 8189 exposed
-# over HTTP. HF_TOKEN, if set, downloads the Rigless Swap LoRA from a private repo.
+# over HTTP. HF_TOKEN, if set, downloads the Rigless LoRA from a private repo.
 set -euo pipefail
+
+# RunPod writes pod environment variables here; SSH sessions don't inherit them.
+[ -f /etc/rp_environment ] && source /etc/rp_environment
+: "${PROXY_TOKEN:?Set the pod environment variable PROXY_TOKEN.}"
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 COMFY=/workspace/ComfyUI
@@ -28,7 +32,8 @@ PROGRESS=/workspace/logs/progress
 mkdir -p "$PROGRESS"
 stage() { echo "{\"stage\": \"$1\", \"since\": $(date +%s)}" > "$PROGRESS/progress.json"; }
 stage comfyui
-trap 'stage failed' ERR
+# EXIT, not ERR: ERR misses an explicit `exit 1`.
+trap '[ $? -eq 0 ] || stage failed' EXIT
 pkill -f "[h]ttp.server 8189" || true
 nohup python3 -m http.server 8189 --directory "$PROGRESS" > /dev/null 2>&1 < /dev/null &
 
@@ -41,10 +46,9 @@ if [ "$CUDA_MAJOR" -lt 13 ]; then
 fi
 
 [ -d "$COMFY" ] || git clone --depth 1 --branch "$COMFY_VERSION" https://github.com/Comfy-Org/ComfyUI "$COMFY"
-if [ ! -d "$COMFY/custom_nodes/h3-relay" ]; then
-  git clone --quiet https://github.com/akatz-ai/h3-relay "$COMFY/custom_nodes/h3-relay"
-  git -C "$COMFY/custom_nodes/h3-relay" checkout --quiet "$H3_RELAY"
-fi
+[ -d "$COMFY/custom_nodes/h3-relay" ] || git clone --quiet https://github.com/akatz-ai/h3-relay "$COMFY/custom_nodes/h3-relay"
+# Every run, so a checkout that failed once never leaves the nodes at their latest.
+git -C "$COMFY/custom_nodes/h3-relay" checkout --quiet "$H3_RELAY"
 [ -x "$VENV/bin/python" ] || uv venv --python 3.12 "$VENV"
 stage torch
 uv pip install --python "$VENV/bin/python" torch torchvision torchaudio \
@@ -54,7 +58,7 @@ uv pip install --python "$VENV/bin/python" -r "$COMFY/requirements.txt" scipy co
 
 stage rigless
 export UV_PROJECT_ENVIRONMENT=/workspace/rigless-venv
-uv sync --project "$REPO" --no-dev
+uv sync --project "$REPO" --no-dev --locked
 uv run --project "$REPO" --no-dev python "$REPO/scripts/download_models.py" \
   --models-dir "$COMFY/models" --progress "$PROGRESS/progress.json"
 stage start

@@ -37,7 +37,7 @@ FILE = "terms.json"
 
 
 def accepted(root: Path) -> bool:
-    """Whether the user agreed to this version of the terms."""
+    """Returns whether the user agreed to this version of the terms."""
     try:
         record = json.loads((root / FILE).read_text("utf-8"))
     except (OSError, ValueError):

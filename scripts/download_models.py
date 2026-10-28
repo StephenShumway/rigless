@@ -3,12 +3,12 @@
 MiniMax H3 and its text encoder and VAEs come from Comfy-Org/MiniMax-H3, the
 FL2V Turbo 8-step LoRA from lightx2v/Minimax-h3-Turbo, SAM 3.1 from
 Comfy-Org/sam3.1, Qwen3-VL-8B (the describer) from Comfy-Org/Qwen-Image-2.1,
-and the Rigless Swap LoRA from its own repository. About 60GB in all. Files
+and the Rigless LoRA from its own repository. About 67GB in all. Files
 already present are skipped, and an interrupted download resumes, here (a few
-tries per file) or on the next run. HF_TOKEN in
-`.env` is sent along if set, for a private repository. With --progress, the
-bytes downloaded so far and in all are kept in a JSON file, which a new RunPod
-pod serves to the app while it sets up.
+tries per file) or on the next run. HF_TOKEN in `.env` is sent to Hugging Face
+if set, for a private repository. With --progress, the bytes downloaded so far
+and in all are kept in a JSON file, which a new RunPod pod serves to the app
+while it sets up.
 
 Typical usage example:
 
@@ -58,12 +58,20 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def request(url: str, **kwargs: str) -> urllib.request.Request:
-    """A request for url, with the Hugging Face token when there is one."""
-    headers = dict(kwargs)
+def request(url: str, **headers: str) -> urllib.request.Request:
+    """Makes a request for url, with the Hugging Face token when there is one.
+
+    Hugging Face answers a download with a redirect to its file storage, whose
+    link is signed; the token stays off that and any other redirect.
+
+    Args:
+        url: The link to request.
+        **headers: More headers to send, such as Range.
+    """
+    made = urllib.request.Request(url, headers=headers)
     if config.HF_TOKEN:
-        headers["Authorization"] = f"Bearer {config.HF_TOKEN}"
-    return urllib.request.Request(url, headers=headers)
+        made.add_unredirected_header("Authorization", f"Bearer {config.HF_TOKEN}")
+    return made
 
 
 def check(url: str) -> None:
@@ -80,7 +88,7 @@ def check(url: str) -> None:
 
 
 def size(url: str) -> int:
-    """The size of a model's download in bytes, or 0 if the server won't say."""
+    """Returns the size of a model's download in bytes, or 0 if the server won't say."""
     head = request(url)
     head.method = "HEAD"
     try:
@@ -101,12 +109,23 @@ def download(
         on_progress: Called after each chunk with the bytes of dest so far.
 
     Raises:
+        PermissionError: Hugging Face refused the download, so trying again
+            won't help.
         OSError: The download failed or stopped early; dest.part is kept.
     """
-    part = dest.with_name(dest.name + ".part")
+    part = _part(dest)
     start = part.stat().st_size if part.exists() else 0
     resume = {"Range": f"bytes={start}-"} if start else {}
-    with urllib.request.urlopen(request(url, **resume), timeout=TIMEOUT) as response:
+    try:
+        response = urllib.request.urlopen(request(url, **resume), timeout=TIMEOUT)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise PermissionError(
+                f"Hugging Face refused {dest.name} (error {exc.code}). If its "
+                "repository is private, set HF_TOKEN to a token that can read it."
+            ) from exc
+        raise
+    with response:
         if response.status != 206:
             start = 0  # The server sent the whole file, so start over.
         length = response.headers.get("Content-Length")
@@ -149,7 +168,11 @@ def fetch_all(models_dir: Path, progress: Path | None = None) -> None:
     finished = sum(
         length for (_, dest), length in zip(wanted, sizes, strict=True) if dest.exists()
     )
-    started, already = time.time(), finished
+    # A resumed download's .part counts as already there, not as fetched now.
+    resumed = sum(
+        _part(dest).stat().st_size for _, dest in wanted if _part(dest).exists()
+    )
+    started, already = time.time(), finished + resumed
     written = 0.0
 
     def report(done: int, now: bool = False) -> None:
@@ -181,12 +204,16 @@ def fetch_all(models_dir: Path, progress: Path | None = None) -> None:
                 download(url, dest, report)
                 break
             except OSError as error:
-                if attempt == TRIES:
+                if attempt == TRIES or isinstance(error, PermissionError):
                     raise
                 print(f"  {error}; trying again")
                 time.sleep(5)
         finished += dest.stat().st_size
     report(0, now=True)
+
+
+def _part(dest: Path) -> Path:
+    return dest.with_name(dest.name + ".part")
 
 
 def main() -> None:

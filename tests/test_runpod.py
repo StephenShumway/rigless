@@ -42,6 +42,19 @@ def test_requests_carry_their_own_user_agent(monkeypatch: pytest.MonkeyPatch) ->
     assert "Python-urllib" not in agent
 
 
+def test_runpod_answering_too_slowly_reads_as_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # urlopen raises a timeout while waiting for the answer as it is, not as URLError.
+    def urlopen(request: urllib.request.Request, timeout: float) -> None:
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(runpod.RunPodError, match="Couldn't reach RunPod"):
+        runpod.pod("rk")
+
+
 def _deploy(monkeypatch: pytest.MonkeyPatch, pub_key: str | None) -> dict[str, Any]:
     """Deploys against a fake RunPod and returns the pod settings it was sent."""
     sent: dict[str, Any] = {}

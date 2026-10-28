@@ -5,7 +5,7 @@ overlapping windows, with the clip as <Video 1> and the character's pictures as
 <Picture 1> to <Picture N>. Everything outside the mask keeps the clip's own
 latents, so the scene and the other people stay as filmed. The graph is built
 from ComfyUI's MiniMax H3 nodes and the H3 Relay node pack (GPL-3.0, installed
-separately in ComfyUI's custom_nodes), with the Rigless Swap LoRA.
+separately in ComfyUI's custom_nodes), with the Rigless LoRA.
 
 H3 hears the clip silent, so it doesn't lip-sync to the soundtrack; each take
 gets the clip's own sound back afterward.
@@ -46,7 +46,7 @@ STEPS = 8
 SAMPLER = "sample"  # the node whose steps take most of a take's time
 RESOLUTIONS = ("480", "768")  # H3 Relay's budgets: about 0.5 and 1 megapixels
 # How far the mask grows, in H3's pixels at 768p, to leave room for hair and
-# clothes: the Rigless Swap LoRA trained at this margin (40 px at 480p), as did
+# clothes: the Rigless LoRA trained at this margin (40 px at 480p), as did
 # H3 Relay's v1.5. It and the paste's margins scale with the resolution.
 EXPAND = 64
 WINDOW_FRAMES = 124
@@ -65,7 +65,7 @@ FEATHER = 8.0  # the soft edge where H3's take meets the footage, in H3's pixels
 # Every take says it's AI-made, in its metadata, as H3's license encourages.
 AI_LABEL = "AI-generated: the person was redrawn by MiniMax H3, with Rigless."
 
-# The prompt the Rigless Swap LoRA was trained with, for one picture.
+# The prompt the Rigless LoRA was trained with, for one picture.
 _REPLACE = "Replace the selected person in <Video 1> with the person in <Picture 1>."
 _KEEP = (
     "Keep the reference person's face, hair and clothing. Follow the source "
@@ -144,7 +144,7 @@ def prompt(
     description: str = "",
     unlike: Sequence[str] = (),
 ) -> str:
-    """Writes what H3 is asked to do, saying what each picture shows.
+    """Returns H3's prompt, saying what each picture shows.
 
     Args:
         roles: Each picture's role, <Picture 1> first: "front", "face",
@@ -167,7 +167,7 @@ def prompt(
 
 
 def group_prompt(castings: Sequence[Casting], notes: str = "") -> str:
-    """Writes what H3 is asked to do when several people are replaced at once.
+    """Returns H3's prompt for replacing several people at once.
 
     Each casting's pictures follow the previous one's: the first casting's
     are <Picture 1> on, the next one's after them.
@@ -255,8 +255,8 @@ def paste(
     footage: Path,
     masks: np.ndarray,
     dest: Path,
-    pad: int = PASTE_PAD,
-    feather: float = FEATHER,
+    pad: int,
+    feather: float,
 ) -> None:
     """Writes the footage with only what H3 redrew taken from its take.
 
@@ -268,9 +268,10 @@ def paste(
         take: H3's render.
         footage: The same frames at full size.
         masks: (frames, height, width) bools in the footage's shape, at any
-            size: where H3 was told to redraw.
+            size: the people H3 was told to redraw.
         dest: Where the result goes, silent.
-        pad: How far past the masks H3 may have drawn, in its own pixels.
+        pad: How far past the masks H3 may have drawn, in its own pixels: the
+            margin they were grown by, plus H3 Relay's cells.
         feather: The soft edge where the take meets the footage, in H3's pixels.
     """
     size = video_prep.probe(footage)
@@ -280,7 +281,6 @@ def paste(
     # canvas and cropped the rest.
     width, height = round(canvas.width / scale), round(canvas.height / scale)
     left, top = (size.width - width) // 2, (size.height - height) // 2
-    grow = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * pad + 1, 2 * pad + 1))
 
     def pasted() -> Iterator[np.ndarray]:
         frames = zip(
@@ -291,7 +291,13 @@ def paste(
             region = _cover(
                 near.any(axis=0).astype(np.float32), canvas.width, canvas.height
             )
-            region = cv2.dilate((region > 0.5).astype(np.float32), grow)
+            # Everything within pad of the region: a round dilation, ~100x faster
+            # than cv2.dilate with a kernel this size (0.9 s a frame at 768p).
+            outside = (region <= 0.5).astype(np.uint8)
+            distance = cv2.distanceTransform(
+                outside, cv2.DIST_L2, cv2.DIST_MASK_PRECISE
+            )
+            region = (distance <= pad).astype(np.float32)
             alpha = cv2.GaussianBlur(region, (0, 0), feather)
             alpha = cv2.resize(alpha, (width, height))[..., None]
             person = cv2.resize(
@@ -701,7 +707,7 @@ def _score(
 
 
 def _scale(resolution: str) -> float:
-    """How lengths in H3's pixels at 768p scale to one of RESOLUTIONS."""
+    """Returns how lengths in H3's pixels at 768p scale to one of RESOLUTIONS."""
     return int(resolution) / 768
 
 

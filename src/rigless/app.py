@@ -49,6 +49,17 @@ SHOOT_TITLE = re.compile(r"Shoot (\d+)")
 MAX_FOOTAGE_SECONDS = 120  # trimmed in the app to at most video_prep.MAX_TRIM_SECONDS
 LOCAL_HOSTS = ["127.0.0.1", "localhost"]
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+# The page runs only its own script, and no other site may frame it: a framed
+# page's clicks would come from this origin and pass the Origin check.
+SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' blob: data:; media-src 'self' blob:; "
+        "object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    ),
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+}
 # RunPod or ComfyUI refused a request. Not 502: Cloudflare, in front of quick
 # tunnels and RunPod's proxy, swaps a 502's body for its own page, reason and all.
 FAILED_DEPENDENCY = 424
@@ -135,6 +146,7 @@ def create_app(root: Path) -> FastAPI:
                 {"detail": "Not from this app's page."}, status_code=403
             )
         response = await call_next(request)
+        response.headers.update(SECURITY_HEADERS)
         if not path.startswith(("/api/", "/files/")):
             # The page's own files change with every update; browsers check them
             # each time (a cheap 304 when unchanged) instead of running stale ones.
@@ -152,8 +164,8 @@ def create_app(root: Path) -> FastAPI:
         config.choose(body.target)
         return _connection()
 
-    @app.post("/api/connection/test")
-    def test_connection() -> dict[str, Any]:
+    @app.get("/api/connection/status")
+    def connection_status() -> dict[str, Any]:
         found = _connection()
         try:
             with comfy_client.connect() as client:
@@ -196,12 +208,16 @@ def create_app(root: Path) -> FastAPI:
         start: Annotated[float, Form(ge=0)] = 0.0,
         end: Annotated[float | None, Form(gt=0)] = None,
     ) -> dict[str, str]:
+        """Creates a shoot from its footage and readies it in the background.
+
+        Without an end, the trim runs MAX_TRIM_SECONDS from start. A file that
+        isn't a readable video or picture is a 400, and the shoot is removed.
+        """
         title = _next_title(store)
         project = store.create(description=description.strip())
         folder = store.folder(project["id"])
         try:
-            dance_path = _save_video(dance, folder, "dance")
-            duration = video_prep.probe(folder / dance_path).duration
+            dance_path, duration = _save_video(dance, folder, "dance")
             if duration > MAX_FOOTAGE_SECONDS:
                 raise ValueError(
                     f"Use a clip up to {MAX_FOOTAGE_SECONDS // 60} minutes long. "
@@ -235,6 +251,7 @@ def create_app(root: Path) -> FastAPI:
 
     @app.patch("/api/projects/{project_id}", response_model=None)
     def change_project(project_id: str, body: ProjectChange) -> Project:
+        """Renames a shoot or changes its prompt or trim; new trims drop tracking."""
         project = _project(store, project_id)
         values: dict[str, Any] = {}
         if body.title is not None:
@@ -280,6 +297,10 @@ def create_app(root: Path) -> FastAPI:
         append: Annotated[str, Form()] = "false",
         person: Annotated[int, Form()] = 0,
     ) -> Project:
+        """Gives a person new character pictures, or more of them when appending.
+
+        If the new pictures can't be used, the person keeps the old ones.
+        """
         theirs = _person(_project(store, project_id), person)
         folder = store.folder(project_id)
         adding = append.lower() == "true"
@@ -304,7 +325,6 @@ def create_app(root: Path) -> FastAPI:
             for path in new:
                 (folder / path).unlink(missing_ok=True)
             use(theirs["sheet"], theirs["removed_pictures"])
-            store.set(project_id, activity=None)
             raise HTTPException(400, str(exc)) from exc
         if not adding:
             for old in theirs["sheet"]:
@@ -329,6 +349,7 @@ def create_app(root: Path) -> FastAPI:
 
     @app.post("/api/projects/{project_id}/anchors", response_model=None)
     def add_anchor(project_id: str, body: AnchorRequest) -> Project:
+        """Picks a person on one frame; SAM finds them there before it answers."""
         project = _idle_project(store, project_id)
         _person(project, body.person)
         footage = project["footage"]
@@ -381,6 +402,10 @@ def create_app(root: Path) -> FastAPI:
 
     @app.post("/api/projects/{project_id}/render", status_code=202, response_model=None)
     def render(project_id: str, body: RenderRequest) -> Project:
+        """Queues new takes once every person has a character and taps.
+
+        The takes are added to the shoot's earlier ones; the terms must be agreed.
+        """
         project = _idle_project(store, project_id)
         seeds = body.seeds or []
         if len(set(seeds)) != len(seeds):
@@ -420,7 +445,7 @@ def create_app(root: Path) -> FastAPI:
     def runpod_status(request: Request) -> dict[str, Any]:
         return _runpod_state(_runpod_key(request))
 
-    @app.post("/api/runpod/start")
+    @app.post("/api/runpod/pod", status_code=201)
     def runpod_start(request: Request, body: PodStart) -> dict[str, Any]:
         key = _runpod_key(request)
         token = secrets.token_urlsafe(32)
@@ -437,7 +462,7 @@ def create_app(root: Path) -> FastAPI:
             config.save_pod(runpod.proxy_url(created["id"]), token)
         return _runpod_state(key)
 
-    @app.post("/api/runpod/pause")
+    @app.post("/api/runpod/pod/pause")
     def runpod_pause(request: Request) -> dict[str, Any]:
         key = _runpod_key(request)
         try:
@@ -446,7 +471,7 @@ def create_app(root: Path) -> FastAPI:
             raise _runpod_failed(exc) from exc
         return _runpod_state(key)
 
-    @app.post("/api/runpod/resume")
+    @app.post("/api/runpod/pod/resume")
     def runpod_resume(request: Request) -> dict[str, Any]:
         key = _runpod_key(request)
         try:
@@ -455,7 +480,7 @@ def create_app(root: Path) -> FastAPI:
             raise _runpod_failed(exc) from exc
         return _runpod_state(key)
 
-    @app.post("/api/runpod/delete")
+    @app.delete("/api/runpod/pod")
     def runpod_delete(request: Request) -> dict[str, Any]:
         key = _runpod_key(request)
         try:
@@ -494,7 +519,7 @@ def main() -> None:
 
 
 def _connection() -> dict[str, Any]:
-    """The connection as the page sees it; the token itself stays here."""
+    """Returns the connection as the page sees it; the token itself stays here."""
     found = config.connection()
     return {"target": found.target, "url": found.url}
 
@@ -514,7 +539,7 @@ def _runpod_key(request: Request) -> str:
 
 
 def _runpod_state(key: str) -> dict[str, Any]:
-    """Rigless's pod, and the GPUs to start one on when there's none.
+    """Returns Rigless's pod, and the GPUs to start one on when there's none.
 
     A pod paused and resumed in RunPod's console may come back on another machine
     with a new id; the connection follows it, keeping its token.
@@ -551,7 +576,7 @@ def _runpod_state(key: str) -> dict[str, Any]:
 
 
 def _runpod_failed(exc: runpod.RunPodError) -> HTTPException:
-    """The answer for a request RunPod refused, logged for whoever runs the app."""
+    """Returns the answer for a request RunPod refused, and logs it."""
     logger.warning("RunPod: %s", exc)
     return HTTPException(FAILED_DEPENDENCY, str(exc))
 
@@ -572,7 +597,7 @@ def _idle_project(store: Store, project_id: str) -> Project:
 
 
 def _summary(project: Project) -> dict[str, Any]:
-    """A project's line in the list of recent projects."""
+    """Returns a project's line in the list of recent projects."""
     scores = [take["score"] for take in project["takes"] if take["score"] is not None]
     views = project["people"][0]["views"] or {}
     return {
@@ -614,22 +639,29 @@ def _shorten(text: str, words: int) -> str:
     return " ".join(parts[:words]) + ("…" if len(parts) > words else "")
 
 
-def _save_video(upload: UploadFile, folder: Path, name: str) -> str:
-    """Saves an uploaded dance video into the project's inputs.
+def _save_video(upload: UploadFile, folder: Path, name: str) -> tuple[str, float]:
+    """Saves an uploaded video into the project's inputs.
+
+    Returns:
+        A tuple (path, duration), where path is the saved file's path in the
+        project and duration is the video's length in seconds.
 
     Raises:
-        ValueError: The file isn't a readable video.
+        ValueError: The file isn't one of VIDEO_TYPES or isn't a readable video.
     """
     path = _save(upload, folder, name, VIDEO_TYPES)
-    video_prep.probe(folder / path)
-    return path
+    try:
+        duration = video_prep.probe(folder / path).duration
+    except ValueError as exc:
+        raise ValueError(f"{upload.filename} isn't a readable video.") from exc
+    return path, duration
 
 
 def _save_image(upload: UploadFile, folder: Path, name: str) -> str:
-    """Saves an uploaded image into the project's inputs.
+    """Saves an uploaded image into the project's inputs and returns its path.
 
     Raises:
-        ValueError: The file isn't a readable image.
+        ValueError: The file isn't one of IMAGE_TYPES or isn't a readable image.
     """
     path = _save(upload, folder, name, IMAGE_TYPES)
     try:

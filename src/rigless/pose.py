@@ -167,7 +167,7 @@ def mask_boxes(masks: np.ndarray) -> list[np.ndarray | None]:
 
 
 def starts_facing_away(track: PoseTrack, seconds: float = 1.0) -> bool:
-    """Whether the person has their back to the camera as the video starts.
+    """Returns whether the person has their back to the camera as the video starts.
 
     From behind, a person's left shoulder is on the image's left. Only frames
     where both shoulders are sure count, and most of them must agree.
@@ -237,7 +237,7 @@ def _model() -> Body:
 
 
 def _largest_person(model: Body, frame: np.ndarray) -> np.ndarray | None:
-    """The (x1, y1, x2, y2) box of the largest person detected, or None."""
+    """Returns the (x1, y1, x2, y2) box of the largest person detected, or None."""
     boxes = model.det_model(frame)
     if len(boxes) == 0:
         return None

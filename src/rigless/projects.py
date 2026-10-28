@@ -22,6 +22,7 @@ Typical usage example:
   worker.submit(project["id"], prepare)
 """
 
+import contextlib
 import dataclasses
 import hashlib
 import json
@@ -40,7 +41,7 @@ from typing import Any, TypedDict, cast
 
 import httpx
 import numpy as np
-from comfy_sdk import ComfyError, JobFailed, Progress
+from comfy_sdk import ComfyError, InvalidWorkflow, JobFailed, Progress
 from PIL import Image
 
 from rigless import config, describe, pose, selection, sheet, swap, video_prep
@@ -167,7 +168,13 @@ class Store:
     def create(
         self, *, description: str = "", trim: tuple[float, float] | None = None
     ) -> Project:
-        """Starts a new project, waiting for its first step."""
+        """Starts a new project, waiting for its first step.
+
+        Args:
+            description: The user's notes for the prompt.
+            trim: The part of the footage to use, as (start, end) in seconds,
+                or None for all of it.
+        """
         with self._lock:
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             project_id, count = stamp, 1
@@ -201,7 +208,7 @@ class Store:
             return project
 
     def folder(self, project_id: str) -> Path:
-        """The project's folder.
+        """Returns the project's folder.
 
         Raises:
             KeyError: No project has that id.
@@ -248,14 +255,19 @@ class Store:
             shutil.rmtree(self.folder(project_id))
 
     def update(self, project_id: str, change: Callable[[Project], None]) -> Project:
-        """Changes a project's state and saves it.
+        """Changes a project's state and saves it, as one step no other call splits.
 
         Args:
             project_id: The project.
-            change: Edits the state in place.
+            change: Edits the state in place. It runs while the store is locked,
+                so it mustn't call the store. If it raises, nothing is saved and
+                the exception passes on.
 
         Returns:
             The new state.
+
+        Raises:
+            KeyError: No project has that id.
         """
         with self._lock:
             project = self._read(project_id)
@@ -272,7 +284,7 @@ class Store:
         return self.update(project_id, change)
 
     def render_speed(self, key: str) -> float | None:
-        """Seconds a take took per second of footage, last time with key's setup."""
+        """Returns a take's last seconds per second of footage with key's setup."""
         with self._lock:
             return self._timing().get(key)
 
@@ -417,34 +429,38 @@ def prepare(store: Store, project_id: str) -> None:
     video_prep.extract_frame(
         footage, min(start + POSTER_DELAY, stop - 1), folder / "poster.jpg"
     )
-    warnings = []
-    if project["people"][0]["sheet"]:
+    ready: dict[str, Any] = {
+        "poster": "poster.jpg",
+        "status": "waiting",
+        "step": "select",
+        "activity": None,
+    }
+    # Only a sheet that came with the footage: one added since this step began
+    # already has its views and warnings.
+    first = store.get(project_id)["people"][0]
+    if first["sheet"] and first["views"] is None:
+        store.set(project_id, activity=activity("Finding the character on the sheet"))
         try:
             views = _extract_views(store, project_id, 0)
         except ValueError as error:
-            warnings.append(str(error))
+            ready["warnings"] = [str(error)]
         else:
-            warnings += [views.warning] if views.warning else []
-    store.set(
-        project_id,
-        poster="poster.jpg",
-        status="waiting",
-        step="select",
-        activity=None,
-        warnings=warnings,
-    )
+            ready["warnings"] = [views.warning] if views.warning else []
+    store.set(project_id, **ready)
 
 
 def set_character(store: Store, project_id: str, person: int) -> Project:
     """Finds a person's character on their sheet images, already saved in it.
 
+    The project's warnings become the ones about this character. Its activity
+    is left alone: this runs while the page waits, even during another step.
+
     Raises:
-        ValueError: No character was found on the images.
+        ValueError: No character was found on the images, or the project's
+            people changed meanwhile.
     """
     views = _extract_views(store, project_id, person)
-    return store.set(
-        project_id, activity=None, warnings=[views.warning] if views.warning else []
-    )
+    return store.set(project_id, warnings=[views.warning] if views.warning else [])
 
 
 def add_person(store: Store, project_id: str) -> Project:
@@ -508,8 +524,10 @@ def add_anchor(store: Store, project_id: str, person: int, anchor: Anchor) -> Pr
         anchor: The taps.
 
     Raises:
-        ValueError: Nobody was found where the user tapped.
+        ValueError: Nobody was found where the user tapped, or RunPod is chosen
+            and there is no pod.
         comfy_sdk.ComfyError: ComfyUI couldn't run the workflow.
+        httpx.TransportError: ComfyUI couldn't be reached.
     """
     folder = store.folder(project_id)
     work = folder / "selection"
@@ -601,7 +619,7 @@ def recent_characters(store: Store, current: str | None = None) -> list[dict[str
 
 
 def _character_digest(folder: Path, person: Person) -> str:
-    """A fingerprint of a person's character images; empty if any are missing."""
+    """Returns a fingerprint of a person's sheet images; empty if any are missing."""
     files = [folder / path for path in person["sheet"]]
     if not files or not all(file.is_file() for file in files):
         return ""
@@ -678,6 +696,9 @@ def _track(store: Store, project_id: str) -> None:
         else:
             masks = _follow(store, project_id, part, rgb, anchors)
             video_prep.write_video(masks.astype(np.uint8) * 255, FPS, path)
+        if not masks.any():
+            who = f"Person {len(found) + 1}" if len(taps) > 1 else "The person"
+            raise ValueError(f"{who} wasn't found in the trimmed part. Tap again.")
         found.append(masks)
         lost = [
             [round(start / FPS + a, 2), round(start / FPS + b, 2)]
@@ -696,8 +717,11 @@ def _track(store: Store, project_id: str) -> None:
         unfinished = work / "preview-unfinished.mp4"
         video_prep.write_video(selection.tint(rgb, found), FPS, unfinished)
         for old in work.glob("preview*.mp4"):
+            # On Windows a preview the page is still playing can't be deleted
+            # yet; the next new preview clears it.
             if old != unfinished:
-                old.unlink()
+                with contextlib.suppress(PermissionError):
+                    old.unlink()
         unfinished.replace(preview)
     store.set(
         project_id,
@@ -752,18 +776,18 @@ def _follow(
 
 
 def _masks_file(work: Path, start: int, stop: int, anchors: list[Anchor]) -> Path:
-    """Where a person's masks from these taps on this part are kept."""
+    """Returns where a person's masks from these taps on this part are kept."""
     key = [start, stop, [dataclasses.astuple(a) for a in anchors]]
     return work / f"person-{_digest(key)}.mp4"
 
 
 def _digest(value: Any) -> str:
-    """A short fingerprint of a JSON-able value, for file names."""
+    """Returns a short fingerprint of a JSON-able value, for file names."""
     return hashlib.sha1(json.dumps(value).encode()).hexdigest()[:12]
 
 
 def _middle(masks: np.ndarray) -> float:
-    """Where a person is across the frame on average, from 0 (left) to 1 (right)."""
+    """Returns where a person is across the frame on average, 0 (left) to 1 (right)."""
     columns = masks.sum(axis=(0, 1), dtype=np.int64)
     return float(
         (columns * np.arange(len(columns))).sum() / columns.sum() / len(columns)
@@ -775,7 +799,7 @@ def allot(counts: list[int], budget: int) -> list[int]:
 
     Args:
         counts: How many pictures each person has.
-        budget: How many H3 takes in all.
+        budget: How many pictures H3 accepts in all.
 
     Returns:
         How many of each person's pictures, from their first, H3 gets.
@@ -790,7 +814,7 @@ def allot(counts: list[int], budget: int) -> list[int]:
 
 
 def places(middles: list[float]) -> list[str]:
-    """Words for where each person is, such as "on the left", for H3's prompt.
+    """Returns words for where each person is, such as "on the left", for H3's prompt.
 
     Args:
         middles: Each person's place across the frame, from 0 (left) to 1, for
@@ -927,7 +951,7 @@ def render(store: Store, project_id: str, options: Mapping[str, Any]) -> None:
 
 
 def _best(takes: list[TakeState]) -> int | None:
-    """The seed of the take to show first, or None if no take is done.
+    """Returns the seed of the take to show first, or None if no take is done.
 
     Takes flagged frozen or mirrored come last; then full quality comes before
     drafts, and the higher score before the lower.
@@ -948,7 +972,7 @@ def _best(takes: list[TakeState]) -> int | None:
 
 
 def _full_size_part(folder: Path, project: Project, start: int, stop: int) -> Path:
-    """The trimmed part at up to OUTPUT_SIDE, frame for frame with the tracked one.
+    """Returns the trimmed part at up to OUTPUT_SIDE, frame for frame.
 
     The footage at full size is made once per shoot, the same way as the
     footage itself, so its frames line up with the ones that were tracked.
@@ -1000,7 +1024,7 @@ def _refuse_unsafe(store: Store, project_id: str) -> None:
 def _picture_order(
     folder: Path, pictures: list[dict[str, str]], masks: Path
 ) -> list[dict[str, str]]:
-    """The character's pictures in the order H3 gets them.
+    """Returns the character's pictures in the order H3 gets them.
 
     H3 takes the person's opening look from <Picture 1>: given the front view
     for a clip that opens from behind, it drew them facing the camera. So the
@@ -1022,8 +1046,8 @@ def _prompt(store: Store, project_id: str, pictures: list[list[dict[str, str]]])
 
     The words also name what each tapped person has that their character
     doesn't, and, with several people, what each wears in the clip, to tell
-    them apart. Words that can't be written are left out, with a warning on
-    the project.
+    them apart. If a person's words can't be written, theirs are left out,
+    with a warning on the project.
 
     Args:
         store: The projects.
@@ -1047,6 +1071,7 @@ def _prompt(store: Store, project_id: str, pictures: list[list[dict[str, str]]])
             unlike = describe.differences(paths, performer, work)
             look = describe.look(performer, work) if len(pictures) > 1 else ""
         except Exception:  # without the words, the takes are still worth rendering
+            logger.exception("Couldn't describe person %d of %s", number, project_id)
             description, unlike, look = "", [], ""
             warning = (
                 "The character couldn't be described automatically, so small "
@@ -1092,7 +1117,7 @@ def _who(number: int, track: dict[str, Any]) -> str:
 
 
 def _tapped_person(folder: Path, anchor: dict[str, Any]) -> Image.Image:
-    """The tapped person on their anchor's frame, with a little room around them."""
+    """Returns the tapped person cropped from their anchor's frame, with some room."""
     frame = folder / "selection" / f"frame-{anchor['frame']}.png"
     video_prep.extract_frame(folder / "footage.mp4", anchor["frame"], frame)
     with Image.open(folder / anchor["mask"]) as overlay:
@@ -1115,11 +1140,17 @@ def _extract_views(store: Store, project_id: str, person: int) -> sheet.Views:
     The pictures H3 gets are the front view, the face close-up, the back view,
     then any other views, at most swap.MAX_PICTURES, leaving out the ones the
     user removed.
+
+    Returns:
+        The views found on the sheet.
+
+    Raises:
+        ValueError: No character was found on the images, or the person's sheet
+            changed while this ran.
     """
     project = store.get(project_id)
     folder = store.folder(project_id)
     theirs = project["people"][person]
-    store.set(project_id, activity=activity("Finding the character on the sheet"))
     images = [sheet.upright(Image.open(folder / path)) for path in theirs["sheet"]]
     views = sheet.extract(images)
     (folder / "views").mkdir(exist_ok=True)
@@ -1155,8 +1186,12 @@ def _extract_views(store: Store, project_id: str, person: int) -> sheet.Views:
         pictures.append({"id": picture_id, "file": name, "role": role})
 
     def change(project: Project) -> None:
-        project["people"][person]["views"] = saved
-        project["people"][person]["pictures"] = pictures
+        people = project["people"]
+        # A person removed meanwhile would shift whose views these are.
+        if person >= len(people) or people[person]["sheet"] != theirs["sheet"]:
+            raise ValueError("The character changed meanwhile. Add the pictures again.")
+        people[person]["views"] = saved
+        people[person]["pictures"] = pictures
 
     store.update(project_id, change)
     return views
@@ -1195,6 +1230,8 @@ def explain(exc: Exception) -> str:
     """Puts a failure into words for the page."""
     if isinstance(exc, JobFailed):
         return f"ComfyUI couldn't finish the job: {exc.error or exc}"
+    if isinstance(exc, InvalidWorkflow):
+        return f"ComfyUI refused the job, often for a missing node pack or model: {exc}"
     if isinstance(exc, ComfyError | ConnectionError | httpx.HTTPError):
         reason = UNREACHABLE[config.connection().target]
         # A refused connection says nothing more than the reason itself.
@@ -1251,7 +1288,7 @@ def _note_step(project: Project, *, index: int, step: int, steps: int) -> None:
 
 
 def _now() -> str:
-    """The time now in UTC, as ISO 8601 with a Z, which browsers read correctly."""
+    """Returns the time now in UTC as ISO 8601 with a Z, which browsers read right."""
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
@@ -1274,7 +1311,11 @@ def _queued_take(seed: int, quality: str) -> TakeState:
 
 
 def _finish_take(project: Project, index: int, take: swap.Take, folder: Path) -> None:
-    """Records a finished take in the project's state."""
+    """Records a finished take in the project's state, and picks the best again.
+
+    Picking here, not only when the render ends, keeps the best right if the
+    render stops partway.
+    """
     state = project["takes"][index]
     state["seed"] = take.seed
     state["status"] = "failed" if take.error else "done"
@@ -1287,10 +1328,11 @@ def _finish_take(project: Project, index: int, take: swap.Take, folder: Path) ->
         state["per_frame"] = cast(list[float | None], record["per_frame"])
         state["video"] = take.finished.relative_to(folder).as_posix()
         state["raw"] = take.result.relative_to(folder).as_posix()
+    project["best"] = _best(project["takes"])
 
 
 def _trimmed_frames(project: Project) -> tuple[int, int]:
-    """The trimmed part of the footage, as [start, stop) frames."""
+    """Returns the trimmed part of the footage, as [start, stop) frames."""
     frames = cast(dict[str, Any], project["footage"])["frames"]
     start, end = project["trim"] or (0.0, frames / FPS)
     return round(start * FPS), min(frames, round(end * FPS))

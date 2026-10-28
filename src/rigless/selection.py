@@ -235,7 +235,7 @@ def merge(anchors: Sequence[Anchor], extra: Sequence[Anchor]) -> list[Anchor]:
 
 
 def _headless(points: np.ndarray, scores: np.ndarray, mask: np.ndarray) -> bool:
-    """Whether the face and shoulders are seen but the mask stops at the shoulders."""
+    """Returns whether the face and shoulders show but the mask stops at them."""
     if scores[NOSE] < SEEN or (scores[SHOULDERS] < SURE).any():
         return False
     (x1, y1), (x2, y2) = points[SHOULDERS]
@@ -245,7 +245,7 @@ def _headless(points: np.ndarray, scores: np.ndarray, mask: np.ndarray) -> bool:
 
 
 def _inside_box(mask: np.ndarray, box: np.ndarray) -> int:
-    """How many of the mask's pixels lie inside an (x1, y1, x2, y2) box."""
+    """Returns how many of the mask's pixels lie inside an (x1, y1, x2, y2) box."""
     x1, y1, x2, y2 = (max(0, round(v)) for v in box)
     return int(mask[y1:y2, x1:x2].sum())
 
@@ -363,11 +363,17 @@ def track_graph(
 def detect(footage: Path, anchor: Anchor, work_dir: Path) -> np.ndarray:
     """Finds the anchor's person on its frame of the footage.
 
+    Args:
+        footage: The footage the anchor's frame number counts in.
+        anchor: The taps.
+        work_dir: Where the frame and the found mask are saved.
+
     Returns:
         The mask as (height, width) bools.
 
     Raises:
-        comfy_sdk.JobFailed: ComfyUI couldn't run the workflow.
+        ValueError: RunPod is chosen and there is no pod.
+        comfy_sdk.ComfyError: ComfyUI couldn't run the workflow.
     """
     frame = work_dir / f"frame-{anchor.frame}.png"
     video_prep.extract_frame(footage, anchor.frame, frame)
@@ -384,12 +390,18 @@ def detect(footage: Path, anchor: Anchor, work_dir: Path) -> np.ndarray:
 def track(footage: Path, anchors: Sequence[Anchor], work_dir: Path) -> np.ndarray:
     """Tracks the person through the whole footage from the anchors.
 
+    Args:
+        footage: The footage to track through.
+        anchors: The person's taps, on the footage's frames.
+        work_dir: Where the reversed footage and each run's masks are saved.
+
     Returns:
         The masks as (frames, height, width) bools.
 
     Raises:
-        ValueError: The anchors don't fit the footage (see plan_segments).
-        comfy_sdk.JobFailed: ComfyUI couldn't run the workflow.
+        ValueError: The anchors don't fit the footage (see plan_segments), or
+            RunPod is chosen and there is no pod.
+        comfy_sdk.ComfyError: ComfyUI couldn't run the workflow.
     """
     info = video_prep.probe(footage)
     segments = plan_segments(anchors, info.frames)
@@ -414,7 +426,7 @@ def track(footage: Path, anchors: Sequence[Anchor], work_dir: Path) -> np.ndarra
 
 
 def _detect(name: str, image: list[str | int], anchor: Anchor) -> Graph:
-    """The SAM 3.1 node that turns an anchor's taps into a mask on image."""
+    """Returns the SAM 3.1 node that turns an anchor's taps into a mask on image."""
     inputs = {
         "model": ["sam", 0],
         "image": image,

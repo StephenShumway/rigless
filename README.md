@@ -96,13 +96,14 @@ For an NVIDIA GPU with 48 GB or more in your own machine:
 
 On any Linux machine with a suitable GPU (another cloud, a lab server), clone this repo and
 run `PROXY_TOKEN=<a long random value> bash deploy/runpod/setup.sh`. It installs everything
-under `/workspace` and starts the proxy on port 8189, protected by that token. Expose the
-port over HTTPS. Then copy `.env.example` to `.env` in your local copy of Rigless and fill
-in two lines:
+under `/workspace` and starts the proxy on port 8189, protected by that token. The proxy
+itself speaks plain HTTP, so put it behind HTTPS (a reverse proxy such as Caddy, or a
+tunnel) before it leaves a private network: the token goes with every request. Then copy
+`.env.example` to `.env` in your local copy of Rigless and fill in two lines:
 
 ```bash
-COMFY_BASE_URL=https://your-server:8189  # where the proxy is
-COMFY_API_KEY=<the same token>           # what the proxy checks on every request
+COMFY_BASE_URL=https://your-server     # the HTTPS address in front of the proxy
+COMFY_API_KEY=<the same token>         # what the proxy checks on every request
 ```
 
 These are the Comfy SDK's standard names. `COMFY_API_KEY` is only needed because the proxy

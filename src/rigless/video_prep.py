@@ -106,6 +106,14 @@ def conform(
     longer side is at most max_side (smaller clips keep their size), and has
     round((end - start) * fps) frames when the clip is long enough.
 
+    Args:
+        src: The clip.
+        dest: Where the copy goes.
+        start: Where the part starts in the clip, in seconds.
+        end: Where it ends, in seconds.
+        fps: The copy's frame rate.
+        max_side: The longest the copy's longer side may be, in pixels.
+
     Raises:
         FileNotFoundError: src does not exist.
         RuntimeError: ffmpeg failed, e.g., because src is not a video.

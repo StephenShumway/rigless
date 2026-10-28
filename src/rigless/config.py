@@ -87,8 +87,12 @@ def _saved() -> dict[str, Any]:
 
 
 def _save(values: dict[str, Any]) -> None:
-    """Writes the connection whole, so a crash mid-write can't leave half a file."""
+    """Writes the connection whole, so a crash mid-write can't leave half a file.
+
+    Only the user may read it: it holds the pod's token.
+    """
     CONNECTION_FILE.parent.mkdir(parents=True, exist_ok=True)
     partial = CONNECTION_FILE.with_suffix(".tmp")
     partial.write_text(json.dumps(values, indent=2), "utf-8")
+    partial.chmod(0o600)
     partial.replace(CONNECTION_FILE)

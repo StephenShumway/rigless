@@ -1,6 +1,8 @@
 import importlib.util
 import json
+import urllib.error
 import urllib.request
+from email.message import Message
 from pathlib import Path
 from types import ModuleType, TracebackType
 
@@ -74,3 +76,24 @@ def test_progress_counts_the_models_already_on_disk(
 
     state = json.loads(progress.read_text())
     assert (state["done"], state["total"], state["from"]) == (7, 7, 3)
+
+
+def test_a_refused_private_download_names_hf_token_without_retrying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = _script()
+    url = "https://example.com/lora.safetensors"
+    monkeypatch.setattr(script, "MODELS", [(url, "loras")])
+    monkeypatch.setattr(script, "size", lambda url: 0)
+    calls: list[str] = []
+
+    def refuse(request: urllib.request.Request, timeout: float) -> None:
+        calls.append(request.full_url)
+        raise urllib.error.HTTPError(url, 401, "Unauthorized", Message(), None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+
+    with pytest.raises(PermissionError, match="HF_TOKEN"):
+        script.fetch_all(tmp_path)
+
+    assert calls == [url]

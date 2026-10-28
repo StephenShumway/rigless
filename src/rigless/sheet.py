@@ -2,16 +2,17 @@
 
 A character sheet shows one character several times on a plain backdrop:
 full-body views from several angles and often face close-ups. The swap gives H3
-the front full-body view as Picture 1, then the most frontal face close-up
-(small identity details such as a monocle survive only with it), the back
-view, and any other views.
+the front full-body view as Picture 1 (the back view when the clip opens with
+the person facing away), then the most frontal face close-up (small identity
+details such as a monocle survive only with it), the back view, and any other
+views.
 
 Figures are found by the pose estimator's person detector, and their pixels by
 color distance from the backdrop, which must be plain and roughly uniform. The
 keypoints tell the views apart: a full-body view shows the ankles, and the
 signed widths of the shoulders and hips show which way a figure faces (the
 person's left shoulder is on the image's right when they face the camera). A
-photo of one person works too; it is its own front view.
+full-body photo of one person works too; it is its own front view.
 
 Typical usage example:
 
@@ -300,44 +301,8 @@ def crop(sheet: Image.Image, views: list[View], view: View) -> Image.Image:
     )
 
 
-def cutout(sheet: Image.Image, view: View) -> Image.Image:
-    """Cuts one view out of the sheet as RGBA, transparent off the figure.
-
-    Parts of the figure as gray as the backdrop, such as a white shirt in
-    shadow, slip through the color threshold as thin seams and small holes; they
-    are closed and filled. The edge is then pulled in by a pixel and softened,
-    so no backdrop fringe shows when the figure is pasted onto a new background.
-    """
-    closed = cv2.morphologyEx(
-        view.mask.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8)
-    )
-    # Real gaps, such as between an arm and the torso, are larger.
-    mask = _fill_holes(closed, max_area=0.01 * int(closed.sum()))
-    alpha = cv2.erode(mask * 255, np.ones((3, 3), np.uint8))
-    image = sheet.convert("RGBA")
-    image.putalpha(Image.fromarray(cv2.GaussianBlur(alpha, (0, 0), 0.8)))
-    return image.crop(view.box)
-
-
-def _fill_holes(mask: np.ndarray, max_area: float) -> np.ndarray:
-    """Fills a 0/1 mask's enclosed holes that are smaller than max_area pixels."""
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(1 - mask, connectivity=4)
-    height, width = mask.shape
-    small = [
-        label
-        for label, (x, y, w, h, area) in enumerate(stats)
-        if label > 0
-        and x > 0
-        and y > 0
-        and x + w < width
-        and y + h < height
-        and area < max_area
-    ]
-    return mask | np.isin(labels, small).astype(np.uint8)
-
-
 def _backdrop(image: np.ndarray) -> np.ndarray:
-    """The backdrop's color: the median of the image's outermost pixels."""
+    """Returns the backdrop's color: the median of the image's outermost pixels."""
     border = np.concatenate([image[0], image[-1], image[:, 0], image[:, -1]])
     return np.median(border, axis=0)
 
@@ -361,6 +326,6 @@ def _cut(blob: np.ndarray, keypoints: list[np.ndarray]) -> list[np.ndarray]:
 
 
 def _bounds(mask: np.ndarray) -> Box:
-    """The (left, top, right, bottom) box around a mask's True pixels."""
+    """Returns the (left, top, right, bottom) box around a mask's True pixels."""
     ys, xs = np.nonzero(mask)
     return int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1

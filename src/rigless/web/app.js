@@ -64,10 +64,13 @@ const state = {
   podStarted: null, // when the running pod started, for its uptime
   connection: null, // the last connection check: { target, url, ok, message }
   connectionChecks: 0,
+  connectionTimer: null,
+  addingPerson: false,
   tagMenu: null, // the open @ menu: { active } is the highlighted character
 };
 
 const QUEUE_POLL_MS = 2000;
+const CONNECTION_RETRY_MS = 30000;
 const WAITING = "Waiting for its turn"; // projects.Worker's label for a queued step
 const VIEWS = ["set", "shoots", "queue"];
 const NEW_TITLE = "New Video";
@@ -162,8 +165,9 @@ const prefs = {
   },
 };
 
+// History has its own line, for a rename or delete that failed there.
 function showError(message) {
-  const node = $(".set-panel .form-error");
+  const node = $(state.view === "shoots" ? "#view-shoots .form-error" : ".set-panel .form-error");
   node.textContent = message || "";
   node.hidden = !message;
 }
@@ -243,6 +247,7 @@ function route() {
   const asked = params.get("view");
   state.view = !id && VIEWS.includes(asked) ? asked : "set";
   show(`view-${state.view}`);
+  if (state.view === "shoots") showError("");
   if (state.view === "set") {
     if (!id || !state.project || state.project.id !== id) resetSet();
     if (id) refresh(id, state.route);
@@ -276,13 +281,16 @@ async function checkConnection() {
   const check = ++state.connectionChecks;
   let result;
   try {
-    result = await api("/api/connection/test", { method: "POST" });
+    result = await api("/api/connection/status");
   } catch (failure) {
     result = { ok: false, message: failure.message };
   }
   if (check !== state.connectionChecks) return;
   state.connection = result;
   showConnection(result);
+  // Until it answers, keep asking, so the top bar notices a pod that's become ready.
+  clearTimeout(state.connectionTimer);
+  if (!result.ok) state.connectionTimer = setTimeout(checkConnection, CONNECTION_RETRY_MS);
   if (result.target === "local" || result.target === "custom") {
     setTargetState(result.target, result.ok ? "ok" : "bad", result.message);
   }
@@ -366,6 +374,7 @@ async function refresh(id, token) {
     project = await api(`/api/projects/${encodeURIComponent(id)}`);
   } catch (failure) {
     if (token !== state.route) return;
+    if (failure.status === 404) resetSet(); // deleted, not a server restarting
     if (state.project && state.project.id === id) {
       // The server may be restarting; keep the page and try again.
       state.reconnecting = true;
@@ -393,6 +402,8 @@ function poll() {
 }
 
 function applyProject(project) {
+  // A slow answer about a shoot the page has since left is dropped.
+  if (new URLSearchParams(location.search).get("p") !== project.id) return;
   if (project.mode !== "swap") {
     state.project = project;
     $(".monitor").dataset.state = "empty";
@@ -449,8 +460,13 @@ function applyProject(project) {
 
 /* Footage: picked, shown at once, uploaded in the background */
 
+// By name too: Windows gives some clips, such as .mkv, no type.
+function isVideo(file) {
+  return Boolean(file) && (file.type.startsWith("video/") || /\.(mp4|mov|m4v|webm|mkv)$/i.test(file.name));
+}
+
 async function chooseFootage(file) {
-  if (!file || !file.type.startsWith("video/")) return;
+  if (!isVideo(file)) return;
   if (state.project || state.local) navigate("/");
   const token = state.route;
   state.local = { file, url: URL.createObjectURL(file) };
@@ -458,21 +474,31 @@ async function chooseFootage(file) {
   buildFilmstrip(state.local.url);
   $(".monitor").dataset.state = "local";
   const video = $(".monitor video");
-  await new Promise((resolve) => video.addEventListener("loadedmetadata", resolve, { once: true }));
+  // A clip this browser can't play (HEVC in some browsers, ProRes) still
+  // uploads: the server converts it, then checks its length and trims it.
+  const playable = await new Promise((resolve) => {
+    video.addEventListener("loadedmetadata", () => resolve(true), { once: true });
+    video.addEventListener("error", () => resolve(false), { once: true });
+  });
   if (token !== state.route) return;
-  state.duration = video.duration;
-  if (state.duration > MAX_FOOTAGE) {
-    showError(`Use a clip up to ${MAX_FOOTAGE / 60} minutes long. This one is ${Math.round(state.duration)} seconds.`);
-    return;
+  const known = playable && Number.isFinite(video.duration);
+  if (known) {
+    state.duration = video.duration;
+    if (state.duration > MAX_FOOTAGE) {
+      showError(`Use a clip up to ${MAX_FOOTAGE / 60} minutes long. This one is ${Math.round(state.duration)} seconds.`);
+      return;
+    }
+    state.trim = [0, Math.min(state.duration, MAX_TRIM)];
+    renderTrim();
+    renderChecklist();
   }
-  state.trim = [0, Math.min(state.duration, MAX_TRIM)];
-  renderTrim();
-  renderChecklist();
 
   const data = new FormData();
   data.append("dance", file);
-  data.append("start", String(state.trim[0]));
-  data.append("end", String(state.trim[1]));
+  if (known) {
+    data.append("start", String(state.trim[0]));
+    data.append("end", String(state.trim[1]));
+  }
   const description = $("textarea[name=description]").value.trim();
   if (description) data.append("description", description);
   const sheet = state.pendingSheet;
@@ -484,14 +510,14 @@ async function chooseFootage(file) {
     state.pendingSheet = null;
     renderCharacter();
   }
-  const sent = state.trim.slice();
+  const sent = state.trim ? state.trim.slice() : null;
   state.uploading = true;
   try {
     const { id } = await upload("/api/projects", data, (fraction) => {
       if (token === state.route) setMessage(fraction < 1 ? `Uploading ${Math.round(fraction * 100)}%` : "Getting the footage ready");
     });
     if (token !== state.route) return;
-    state.trimDirty = state.trim[0] !== sent[0] || state.trim[1] !== sent[1];
+    state.trimDirty = Boolean(sent) && (state.trim[0] !== sent[0] || state.trim[1] !== sent[1]);
     history.replaceState(null, "", `?p=${encodeURIComponent(id)}`);
     await refresh(id, token);
   } catch (failure) {
@@ -619,6 +645,7 @@ function setupMonitor() {
     if (event.ctrlKey || event.metaKey || event.altKey) {
       return;
     } else if (key === " ") {
+      if (event.target.closest("button, a, [tabindex]")) return; // Space presses what has focus
       event.preventDefault();
       $(".transport [data-action=play]").click();
     } else if (key === "arrowleft" || key === "arrowright") {
@@ -741,8 +768,9 @@ async function syncEdits() {
   const sentTrim = state.trim.slice();
   try {
     const updated = await api(projectPath(), { method: "PATCH", json: body });
+    // Only what was sent is saved; anything changed meanwhile goes next time.
     if (state.trim[0] === sentTrim[0] && state.trim[1] === sentTrim[1]) state.trimDirty = false;
-    state.descriptionDirty = false;
+    if ($("textarea[name=description]").value === body.description) state.descriptionDirty = false;
     applyProject(updated);
     if (body.trim && hasTaps(updated)) scheduleTrack();
   } catch (failure) {
@@ -925,7 +953,10 @@ function drawOverlay() {
   const video = $(".monitor video");
   const project = state.project;
   const empty = $(".monitor").dataset.state === "empty";
-  if (!empty) $(".hud-tc").textContent = timecode(footageTime(), FPS);
+  // Written only when it changes: this runs every frame, even while nothing plays.
+  const hud = $(".hud-tc");
+  const tc = empty ? hud.textContent : timecode(footageTime(), FPS);
+  if (hud.textContent !== tc) hud.textContent = tc;
   drawPlayhead();
   const ratio = window.devicePixelRatio || 1;
   const width = Math.round(canvas.clientWidth * ratio);
@@ -1126,6 +1157,8 @@ async function removePicture(index, id) {
 }
 
 async function addPerson() {
+  if (state.addingPerson) return; // a double-click adds one person, not two
+  state.addingPerson = true;
   showError("");
   try {
     const project = await api(projectPath("/people"), { method: "POST" });
@@ -1133,6 +1166,8 @@ async function addPerson() {
     applyProject(project);
   } catch (failure) {
     showError(failure.message);
+  } finally {
+    state.addingPerson = false;
   }
 }
 
@@ -1150,6 +1185,10 @@ function removePerson(index) {
       }, { once: true });
       return;
     }
+    if (event.detail > 1) return; // a double-click's second click isn't a decision
+    // The button stays, on the card that now shows the next person: unarmed.
+    button.classList.remove("confirm");
+    button.textContent = "×";
     showError("");
     // The card goes at once; the server's answer follows.
     const before = state.project;
@@ -1373,7 +1412,7 @@ async function useRecent(item) {
 // Files dropped or pasted anywhere go where they belong: a clip is the
 // footage, images are the character.
 function takeFiles(files) {
-  const video = files.find((file) => file.type.startsWith("video/"));
+  const video = files.find(isVideo);
   const images = files.filter((file) => file.type.startsWith("image/"));
   if (video) chooseFootage(video);
   if (images.length) chooseCharacter(images);
@@ -1509,22 +1548,10 @@ function everyone(project, has) {
   return all.length > 0 && all.every(has);
 }
 
-function checklist() {
-  const project = state.project;
-  const character = Boolean(state.pendingSheet || state.sendingSheet)
-    || everyone(project, (person) => person.pictures.length > 0);
-  return [
-    ["Footage", Boolean(state.local || project)],
-    ["Character", character],
-    ["Person", everyone(project, (person) => person.anchors.length > 0)],
-  ];
-}
-
 function renderChecklist() {
-  const items = checklist();
   const project = state.project;
-  const character = everyone(project, (person) => person.pictures.length > 0);
-  $("#generate").disabled = !items.every(([, done]) => done) || busy(project) || !character;
+  const ready = everyone(project, (person) => person.pictures.length > 0 && person.anchors.length > 0);
+  $("#generate").disabled = !ready || busy(project);
 }
 
 function setupGenerate() {
@@ -1549,6 +1576,9 @@ function setupGenerate() {
     }
     try {
       if (!(await termsAgreed())) return;
+      // Edits still waiting out their delay go first, or the take would miss them.
+      clearTimeout(state.syncTimer);
+      await syncEdits();
       applyProject(await api(projectPath("/render"), { method: "POST", json: { takes: 1, quality: state.quality } }));
       poll();
     } catch (failure) {
@@ -1575,6 +1605,7 @@ async function termsAgreed() {
   $(".authorization-link", dialog).href = terms.authorization_url;
   $("#terms-agree").checked = false;
   $("#terms-accept").disabled = true;
+  dialog.returnValue = ""; // Esc keeps the last value, which may be an earlier "agree"
   dialog.showModal();
   await new Promise((resolve) => dialog.addEventListener("close", resolve, { once: true }));
   if (dialog.returnValue !== "agree") return false;
@@ -1716,6 +1747,11 @@ async function loadShoots() {
   try {
     state.shoots = (await api("/api/projects")).filter((project) => project.mode === "swap");
   } catch {
+    // The server may be restarting; the queue keeps asking.
+    if (state.view === "queue") {
+      clearTimeout(state.queueTimer);
+      state.queueTimer = setTimeout(loadShoots, QUEUE_POLL_MS);
+    }
     return;
   }
   renderShoots();
@@ -1821,10 +1857,12 @@ function deleteShoot(project) {
       button.addEventListener("pointerleave", renderShoots, { once: true });
       return;
     }
+    if (event.detail > 1) return; // a double-click's second click isn't a decision
     try {
       await api(`/api/projects/${encodeURIComponent(project.id)}`, { method: "DELETE" });
     } catch (failure) {
       showError(failure.message);
+      renderShoots();
       return;
     }
     state.shoots = state.shoots.filter((shoot) => shoot.id !== project.id);
@@ -1836,7 +1874,7 @@ function deleteShoot(project) {
 // asked for, each with how long it should take and when it should start.
 function queueJobs() {
   return state.shoots
-    .filter((project) => project.status === "working")
+    .filter((project) => project.status === "working" && project.activity)
     .sort((a, b) => Number(a.activity.label === WAITING) - Number(b.activity.label === WAITING)
       || new Date(a.activity.started) - new Date(b.activity.started));
 }
@@ -2387,7 +2425,7 @@ function setupRunPod() {
     setRunPodMessage("Starting…", "");
     try {
       const gpu = event.currentTarget.elements.gpu.value;
-      renderRunPod(await runpodCall("/start", { method: "POST", json: { gpu } }));
+      renderRunPod(await runpodCall("/pod", { method: "POST", json: { gpu } }));
       setRunPodMessage("", "");
       loadComfyUI();
       checkConnection();
@@ -2397,9 +2435,9 @@ function setupRunPod() {
       button.disabled = false;
     }
   });
-  $("#pause-pod").addEventListener("click", (event) => podAction(event.currentTarget, "/pause",
+  $("#pause-pod").addEventListener("click", (event) => podAction(event.currentTarget, "/pod/pause", "POST",
     "Paused. The GPU is released, so only the disk is billed now."));
-  $("#resume-pod").addEventListener("click", (event) => podAction(event.currentTarget, "/resume",
+  $("#resume-pod").addEventListener("click", (event) => podAction(event.currentTarget, "/pod/resume", "POST",
     "Resuming. It's back in a few minutes.",
     "If its machine's GPU is taken, delete the pod and deploy a fresh one."));
   // The first click asks. The second removes the pod and its disk.
@@ -2414,16 +2452,17 @@ function setupRunPod() {
       }, { once: true });
       return;
     }
+    if (event.detail > 1) return; // a double-click's second click isn't a decision
     button.classList.remove("btn-danger");
     button.textContent = "Delete";
-    podAction(button, "/delete", "Deleted. The pod and its disk are gone, so nothing more is billed.");
+    podAction(button, "/pod", "DELETE", "Deleted. The pod and its disk are gone, so nothing more is billed.");
   });
 }
 
-async function podAction(button, path, done, hint = "") {
+async function podAction(button, path, method, done, hint = "") {
   button.disabled = true;
   try {
-    renderRunPod(await runpodCall(path, { method: "POST" }));
+    renderRunPod(await runpodCall(path, { method }));
     setRunPodMessage(done, "ok");
     checkConnection();
   } catch (failure) {

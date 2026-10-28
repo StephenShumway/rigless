@@ -199,12 +199,12 @@ def delete(key: str) -> None:
 
 
 def idle_cost_per_hour(found: Mapping[str, Any]) -> float:
-    """What a pod's disk costs an hour while the pod is paused, in dollars."""
+    """Returns what a pod's disk costs an hour while the pod is paused, in dollars."""
     return float(found.get("volumeInGb") or 0) * IDLE_PER_GB_MONTH / HOURS_PER_MONTH
 
 
 def setup_progress(pod_url: str) -> dict[str, Any] | None:
-    """How far a new pod's setup has got, or None if the pod isn't saying.
+    """Returns how far a new pod's setup has got, or None if the pod isn't saying.
 
     While it sets up, the pod serves `progress.json` on the port that
     comfy-api-proxy takes over once ComfyUI is running.
@@ -228,7 +228,7 @@ def setup_progress(pod_url: str) -> dict[str, Any] | None:
 
 
 def ssh_command(found: Mapping[str, Any]) -> str | None:
-    """The command to SSH into a pod, or None until RunPod has given it an address."""
+    """Returns the command to SSH into a pod, or None until it has an address."""
     port = (found.get("portMappings") or {}).get("22")
     if not found.get("publicIp") or not port:
         return None
@@ -236,7 +236,7 @@ def ssh_command(found: Mapping[str, Any]) -> str | None:
 
 
 def gpu_name(found: Mapping[str, Any]) -> str | None:
-    """A pod's GPU as people call it, such as "H100 SXM", or None if RunPod omits it."""
+    """Returns a pod's GPU as people call it, such as "H100 SXM", or None if unknown."""
     machine = found.get("machine") or {}
     name = (
         (found.get("gpu") or {}).get("displayName")
@@ -248,12 +248,12 @@ def gpu_name(found: Mapping[str, Any]) -> str | None:
 
 
 def proxy_url(pod_id: str) -> str:
-    """The address of a pod's comfy-api-proxy through RunPod's HTTPS proxy."""
+    """Returns the address of a pod's comfy-api-proxy through RunPod's HTTPS proxy."""
     return f"https://{pod_id}-8189.proxy.runpod.net"
 
 
 def setup_estimate(progress: Mapping[str, Any], now: float) -> dict[str, float]:
-    """Roughly how far a new pod's setup has got, from the progress it reports.
+    """Returns roughly how far a new pod's setup has got, from the progress it reports.
 
     Args:
         progress: What setup_progress returned.
@@ -328,7 +328,14 @@ def _call(key: str, method: str, url: str, body: Any = None) -> Any:
         raise RunPodError(_reason(exc)) from exc
     except urllib.error.URLError as exc:
         raise RunPodError(f"Couldn't reach RunPod ({exc.reason}).") from exc
-    return json.loads(answer) if answer.strip() else None
+    # urlopen wraps only connection errors in URLError; a timeout or a dropped
+    # connection while waiting for the answer comes through as it is.
+    except (OSError, http.client.HTTPException) as exc:
+        raise RunPodError(f"Couldn't reach RunPod ({exc}).") from exc
+    try:
+        return json.loads(answer) if answer.strip() else None
+    except ValueError as exc:
+        raise RunPodError("RunPod's answer wasn't readable. Try again.") from exc
 
 
 def _reason(exc: urllib.error.HTTPError) -> str:

@@ -122,7 +122,7 @@ def test_paste_takes_only_the_redrawn_person_from_the_take(tmp_path: Path) -> No
     masks = np.zeros((6, 48, 64), bool)
     masks[:, 22:26, 30:34] = True  # the person, in the middle, at a quarter size
 
-    swap.paste(take, footage, masks, out)
+    swap.paste(take, footage, masks, out, swap.PASTE_PAD, swap.FEATHER)
 
     frames = video_prep.read_frames(out).astype(int)
     original = video_prep.read_frames(footage).astype(int)

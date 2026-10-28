@@ -3,10 +3,10 @@
 Without a description, H3 gets small or unusual details wrong (a monocle drawn
 as round glasses) and carries over what the replaced person wears (their rings
 onto the character's hands). Qwen3-VL-8B, the text encoder Qwen-Image 2.1 ships
-with (Apache-2.0), looks at the character's pictures side by side and describes
-them. It then answers yes or no, item by item, for what the replaced person
-wears and the character doesn't; it follows that format far more reliably than
-a request for a list.
+with (under the Qwen Research License; see the README), looks at the
+character's pictures side by side and describes them. It then answers yes or
+no, item by item, for what the replaced person wears and the character
+doesn't; it follows that format far more reliably than a request for a list.
 
 Typical usage example:
 
@@ -127,15 +127,19 @@ def ask_graph(image: str | Asset, questions: Sequence[str], max_length: int) -> 
 
 
 def said_yes(answer: str) -> bool:
-    """Whether a yes-or-no answer is yes."""
+    """Returns whether a yes-or-no answer is yes."""
     return answer.strip().strip("*").lower().startswith("yes")
 
 
 def character(pictures: Sequence[Path], work_dir: Path) -> str:
     """Describes the character from all their pictures at once.
 
+    Args:
+        pictures: The character's pictures.
+        work_dir: Where the collage and answer are saved.
+
     Raises:
-        comfy_sdk.JobFailed: ComfyUI couldn't run the workflow.
+        comfy_sdk.ComfyError: ComfyUI couldn't run the workflow.
     """
     images = [Image.open(path) for path in pictures]
     (answer,) = _ask(images, [DESCRIBE], work_dir, max_length=256)
@@ -147,8 +151,13 @@ def has(
 ) -> list[str]:
     """Returns which of the items, keys of CARRY_OVER, the person shown has.
 
+    Args:
+        images: The person, in one or more pictures seen side by side.
+        items: The keys of CARRY_OVER to ask about.
+        work_dir: Where the collage and answers are saved.
+
     Raises:
-        comfy_sdk.JobFailed: ComfyUI couldn't run the workflow.
+        comfy_sdk.ComfyError: ComfyUI couldn't run the workflow.
     """
     questions = [_QUESTION.format(CARRY_OVER[item]) for item in items]
     answers = _ask(images, questions, work_dir, max_length=4)
@@ -158,12 +167,16 @@ def has(
 
 
 def unsafe(images: Sequence[Image.Image], work_dir: Path) -> bool:
-    """Whether the images, seen side by side, show anything unsafe for work.
+    """Returns whether the images, seen side by side, show anything unsafe for work.
 
     One of the safeguards H3's license asks for: a yes stops the render.
 
+    Args:
+        images: The pictures and frames to check.
+        work_dir: Where the collage and answer are saved.
+
     Raises:
-        comfy_sdk.JobFailed: ComfyUI couldn't run the workflow.
+        comfy_sdk.ComfyError: ComfyUI couldn't run the workflow.
     """
     (answer,) = _ask(images, [_UNSAFE], work_dir, max_length=4)
     return said_yes(answer)
@@ -180,7 +193,7 @@ def look(performer: Image.Image, work_dir: Path) -> str:
         A short phrase such as "in a red hoodie and blue jeans".
 
     Raises:
-        comfy_sdk.JobFailed: ComfyUI couldn't run the workflow.
+        comfy_sdk.ComfyError: ComfyUI couldn't run the workflow.
     """
     (answer,) = _ask([performer], [_LOOK], work_dir, max_length=24)
     phrase = _LEAD.sub("", " ".join(answer.split())).strip(" .'\"")
@@ -201,7 +214,7 @@ def differences(
         Keys of CARRY_OVER, in its order.
 
     Raises:
-        comfy_sdk.JobFailed: ComfyUI couldn't run the workflow.
+        comfy_sdk.ComfyError: ComfyUI couldn't run the workflow.
     """
     worn = has([performer], list(CARRY_OVER), work_dir)
     if not worn:

@@ -50,6 +50,14 @@ def test_the_page_itself_can_make_changes(root: Path, client: TestClient) -> Non
     assert terms.accepted(root)
 
 
+def test_other_sites_cannot_frame_the_page(client: TestClient) -> None:
+    # A framed page's clicks come from this origin, so the Origin check can't stop them.
+    response = client.get("/")
+
+    assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+    assert response.headers["X-Frame-Options"] == "DENY"
+
+
 def test_project_files_stay_inside_the_project(root: Path, client: TestClient) -> None:
     project_id = _swap_project(root)
     (root / "secret.txt").write_text("not yours")
@@ -310,6 +318,23 @@ def test_removed_picture_stays_out_when_more_are_added(
 
 
 @pytest.mark.usefixtures("one_view_per_image")
+def test_a_character_added_while_the_footage_readies_keeps_the_steps_activity(
+    root: Path, client: TestClient
+) -> None:
+    # The page uploads the character as soon as the shoot exists, mid-prepare.
+    project_id = _swap_project(root)
+    working = projects.activity("Getting the footage ready")
+    Store(root).set(project_id, status="working", activity=working)
+
+    client.post(
+        f"/api/projects/{project_id}/character",
+        files=[("sheet", ("a.png", _png(), "image/png"))],
+    )
+
+    assert client.get(f"/api/projects/{project_id}").json()["activity"] == working
+
+
+@pytest.mark.usefixtures("one_view_per_image")
 def test_a_failed_character_replacement_keeps_the_old_pictures(
     root: Path, client: TestClient
 ) -> None:
@@ -389,10 +414,10 @@ def test_started_pod_becomes_the_connection_with_its_own_token(
     client.put("/api/connection", json={"target": "local"})
 
     response = client.post(
-        "/api/runpod/start", json={"gpu": "NVIDIA A40"}, headers={"X-RunPod-Key": "rk"}
+        "/api/runpod/pod", json={"gpu": "NVIDIA A40"}, headers={"X-RunPod-Key": "rk"}
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     token = sent["PROXY_TOKEN"]
     assert token != "rk"
     assert config.connection() == Connection(
@@ -407,13 +432,13 @@ def test_connection_test_fails_when_nothing_answers(
     monkeypatch.setattr(config, "LOCAL_URL", "http://127.0.0.1:9")
     client.put("/api/connection", json={"target": "local"})
 
-    result = client.post("/api/connection/test").json()
+    result = client.get("/api/connection/status").json()
 
     assert (result["target"], result["ok"]) == ("local", False)
 
 
 def test_runpod_without_a_pod_says_to_deploy_one(client: TestClient) -> None:
-    result = client.post("/api/connection/test").json()
+    result = client.get("/api/connection/status").json()
 
     assert (result["target"], result["ok"]) == ("runpod", False)
     assert "Deploy" in result["message"]
@@ -438,7 +463,7 @@ def test_runpods_refusal_reaches_the_page_in_its_own_words(
     monkeypatch.setattr(runpod, "start", start)
 
     response = client.post(
-        "/api/runpod/start", json={"gpu": "NVIDIA H100"}, headers={"X-RunPod-Key": "rk"}
+        "/api/runpod/pod", json={"gpu": "NVIDIA H100"}, headers={"X-RunPod-Key": "rk"}
     )
 
     # Cloudflare replaces the body of a 502 or 504 with its own page.
