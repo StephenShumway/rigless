@@ -11,7 +11,6 @@ const MAX_TRIM = 20;
 const MAX_FOOTAGE = 120;
 // Seconds per second of clip for one take on an H100, by quality (projects.QUALITIES).
 const RENDER_SECONDS_PER_SECOND = { full: 52, draft: 26 }; // measured Oct 24 and Oct 27
-const QUALITY_NAMES = { draft: "Draft · 480p", full: "Full · 768p" };
 const TRACK_DELAY_MS = 1200; // tracking starts this long after the last tap
 const SYNC_DELAY_MS = 700;
 const REVEAL_MS = 240; // the found person fades in over this long
@@ -21,6 +20,7 @@ const THUMBS = 12;
 const PREFS_KEY = "rigless:prefs";
 const RUNPOD_KEY = "rigless:runpod-key"; // the user's RunPod API key, kept only in this browser
 const POD_POLL_MS = 10000;
+const SETUP_POLL_MS = 3000; // while a new pod reports its setup's progress
 // Each person's mask colour, in the order they're added (--mask-1 to --mask-3);
 // selection.TINTS matches.
 const MASK_COLORS = ["#90E2DD", "#65955A", "#96A7E7"];
@@ -61,6 +61,10 @@ const state = {
   view: "set", // the page shown: set (a shoot), shoots, or queue
   queueTimer: null,
   podTimer: null,
+  podStarted: null, // when the running pod started, for its uptime
+  connection: null, // the last connection check: { target, url, ok, message }
+  connectionChecks: 0,
+  tagMenu: null, // the open @ menu: { active } is the highlighted character
 };
 
 const QUEUE_POLL_MS = 2000;
@@ -268,12 +272,19 @@ function setTitle(text) {
 const TARGET_NAMES = { runpod: "RunPod", local: "This computer", custom: "Custom" };
 
 async function checkConnection() {
+  // Only the latest check counts, so switching back and forth never shows an older answer.
+  const check = ++state.connectionChecks;
+  let result;
   try {
-    const result = await api("/api/connection/test", { method: "POST" });
-    showConnection(result);
-    if (result.target === "local") setLocalMessage(result.message, result.ok ? "ok" : "bad");
+    result = await api("/api/connection/test", { method: "POST" });
   } catch (failure) {
-    showConnection({ ok: false, message: failure.message });
+    result = { ok: false, message: failure.message };
+  }
+  if (check !== state.connectionChecks) return;
+  state.connection = result;
+  showConnection(result);
+  if (result.target === "local" || result.target === "custom") {
+    setTargetState(result.target, result.ok ? "ok" : "bad", result.message);
   }
 }
 
@@ -283,6 +294,27 @@ function showConnection({ target, url, ok, message }) {
   indicator.title = message;
   const status = ok ? "Connected" : target === "runpod" && !url ? "No pod" : "Not connected";
   $(".connection-label", indicator).textContent = target ? `${TARGET_NAMES[target]} · ${status}` : status;
+}
+
+// Shown at once on a switch, while the check takes its few seconds.
+function showConnecting(target) {
+  const indicator = $("#connection");
+  indicator.dataset.state = "checking";
+  indicator.title = "";
+  $(".connection-label", indicator).textContent = `${TARGET_NAMES[target]} · Connecting…`;
+  if (target !== "runpod") setTargetState(target, "checking");
+}
+
+// The status line on the This computer and Custom tabs.
+function setTargetState(target, tone, message = "") {
+  const line = $(`.${target}-state`);
+  line.className = `pod-state ${target}-state ${tone}`;
+  if (tone === "checking") line.replaceChildren(spinner(), "Connecting…");
+  else line.textContent = tone === "ok" ? "Connected" : message;
+}
+
+function spinner() {
+  return el("span", { class: "spinner", "aria-hidden": "true" });
 }
 
 /* The set */
@@ -430,7 +462,7 @@ async function chooseFootage(file) {
   if (token !== state.route) return;
   state.duration = video.duration;
   if (state.duration > MAX_FOOTAGE) {
-    showError(`Use a clip up to ${MAX_FOOTAGE / 60} minutes long; this one is ${Math.round(state.duration)} seconds.`);
+    showError(`Use a clip up to ${MAX_FOOTAGE / 60} minutes long. This one is ${Math.round(state.duration)} seconds.`);
     return;
   }
   state.trim = [0, Math.min(state.duration, MAX_TRIM)];
@@ -1169,10 +1201,8 @@ function renderCharacter() {
   const add = $(".add-person");
   add.hidden = !project || count >= MAX_PEOPLE;
   add.disabled = busy(project);
-  const tags = Array.from({ length: count }, (_, index) => `@${index + 1}`);
-  const listed = tags.length > 1 ? `${tags.slice(0, -1).join(", ")} or ${tags.at(-1)}` : tags[0];
-  $("textarea[name=description]").placeholder = `Anything the pictures don't show. Type ${listed} to tag ${
-    count > 1 ? "a character" : "the character"}: their references and mask.`;
+  $("textarea[name=description]").placeholder = `Optional. Anything the pictures don't show. Type @ to tag ${
+    count > 1 ? "a character" : "the character"}.`;
   renderPromptMarks();
   renderCharacterStatus();
 }
@@ -1390,6 +1420,86 @@ function setupNotes() {
   notes.addEventListener("scroll", () => {
     $(".prompt-marks").scrollTop = notes.scrollTop;
   });
+  setupTagMenu(notes);
+}
+
+/* The @ menu: typing @ in the prompt lists the characters to tag */
+
+function setupTagMenu(notes) {
+  notes.addEventListener("input", updateTagMenu);
+  notes.addEventListener("click", updateTagMenu);
+  notes.addEventListener("blur", closeTagMenu);
+  notes.addEventListener("keydown", (event) => {
+    if (!state.tagMenu) return;
+    const count = $(".tag-menu").children.length;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      state.tagMenu.active = (state.tagMenu.active + (event.key === "ArrowDown" ? 1 : count - 1)) % count;
+      updateTagMenu();
+    } else if (event.key === "Enter" || event.key === "Tab") {
+      insertTag(state.tagMenu.active);
+    } else if (event.key === "Escape") {
+      closeTagMenu();
+    } else {
+      return;
+    }
+    event.preventDefault();
+  });
+  // The menu is fixed to the window, so it closes when the page under it scrolls.
+  document.addEventListener("scroll", (event) => {
+    if (!event.target.closest?.(".prompt-box")) closeTagMenu();
+  }, true);
+  window.addEventListener("resize", closeTagMenu);
+}
+
+// Open while the caret is right after an @ that starts a word.
+function updateTagMenu() {
+  const notes = $("textarea[name=description]");
+  const before = notes.value.slice(0, notes.selectionStart);
+  if (notes.selectionStart !== notes.selectionEnd || !/(^|[\s(])@$/.test(before)) {
+    closeTagMenu();
+    return;
+  }
+  const count = Math.max(1, people().length);
+  const active = Math.min(state.tagMenu?.active ?? 0, count - 1);
+  state.tagMenu = { active };
+  const menu = $(".tag-menu");
+  menu.replaceChildren(...Array.from({ length: count }, (_, index) => tagOption(index, index === active, count > 1)));
+  menu.hidden = false;
+  const box = notes.getBoundingClientRect();
+  const below = box.bottom + 6 + menu.offsetHeight <= innerHeight;
+  menu.style.left = `${box.left}px`;
+  menu.style.width = `${box.width}px`;
+  menu.style.top = `${below ? box.bottom + 6 : box.top - 6 - menu.offsetHeight}px`;
+}
+
+function tagOption(index, active, several) {
+  const picture = pictures(state.project, index)[0];
+  const pending = cardFiles(index)[0];
+  const src = picture ? fileUrl(state.project.id, picture.file) : pending ? localUrl(pending) : null;
+  return el("li", {
+    role: "option", class: "tag-option", "aria-selected": String(active),
+    onpointerdown: (event) => event.preventDefault(), // keeps the caret in the prompt
+    onclick: () => insertTag(index),
+  },
+  src ? el("img", { src, alt: "" }) : el("span", { class: "tag-thumb" }),
+  el("span", { class: "mask-badge", style: `--mask: ${MASK_COLORS[index]}` }, String(index + 1)),
+  el("span", {}, several ? `Person ${index + 1}` : "Character"),
+  el("span", { class: "tag-name" }, `@${index + 1}`));
+}
+
+// Turns the typed @ into @n, with a space after it unless one follows already.
+function insertTag(index) {
+  const notes = $("textarea[name=description]");
+  const caret = notes.selectionStart;
+  const space = /\s/.test(notes.value[caret] || "") ? "" : " ";
+  notes.setRangeText(`@${index + 1}${space}`, caret - 1, caret, "end");
+  closeTagMenu();
+  notes.dispatchEvent(new Event("input"));
+}
+
+function closeTagMenu() {
+  state.tagMenu = null;
+  $(".tag-menu").hidden = true;
 }
 
 /* Generate */
@@ -1415,28 +1525,6 @@ function renderChecklist() {
   const project = state.project;
   const character = everyone(project, (person) => person.pictures.length > 0);
   $("#generate").disabled = !items.every(([, done]) => done) || busy(project) || !character;
-  $(".next-step").textContent = nextStep();
-}
-
-// The one thing to do next, or, once everything is in, how long Generate takes.
-function nextStep() {
-  const project = state.project;
-  if (!project && !state.local) return "Drop a clip to start.";
-  if (busy(project) && project.step === "render") return "";
-  if (!footageReady(project)) return "Getting the footage ready…";
-  if (state.sendingSheet) return "Adding the character…";
-  const all = people(project);
-  const bare = all.findIndex((person) => !person.pictures.length);
-  const untapped = all.findIndex((person) => !person.anchors.length);
-  if (all.length > 1 && bare >= 0) return `Next: add pictures for person ${bare + 1}.`;
-  if (all.length > 1 && untapped >= 0) {
-    return `Next: with card ${untapped + 1} selected, click that person in the video.`;
-  }
-  if (bare >= 0) return "Next: add pictures of the character.";
-  if (untapped >= 0) return "Next: click the person to replace in the video.";
-  if (!state.trim) return "";
-  const seconds = (state.trim[1] - state.trim[0]) * RENDER_SECONDS_PER_SECOND[state.quality];
-  return `${QUALITY_NAMES[state.quality]} · about ${Math.max(1, Math.round(seconds / 60))} min on an H100`;
 }
 
 function setupGenerate() {
@@ -2050,7 +2138,7 @@ function trace(take) {
   const y = (value) => height - ((value - floor) / (100 - floor)) * height;
 
   const chart = svg("svg", { class: "trace", viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", role: "img",
-    "aria-label": scored.length ? `Motion score per frame; lowest ${lowest.toFixed(0)}` : "No frames scored" });
+    "aria-label": scored.length ? `Motion score per frame, lowest ${lowest.toFixed(0)}` : "No frames scored" });
   chart.append(svg("line", { class: "guide", x1: 0, x2: width, y1: y(100), y2: y(100) }));
   chart.append(svg("line", { class: "guide", x1: 0, x2: width, y1: height, y2: height }));
 
@@ -2089,16 +2177,18 @@ function syncKeyed(container, items, keyOf, create, update) {
   for (const node of existing.values()) node.remove();
 }
 
-/* ComfyUI: where Rigless renders, a RunPod pod or this computer, in a dialog */
+/* ComfyUI: where Rigless renders, a RunPod pod, this computer or a custom address, in a dialog */
+
+const TABS = ["runpod", "local", "custom"];
 
 function openComfyUI() {
   const dialog = $("#comfyui-dialog");
+  if (state.connection?.target) showTab(state.connection.target);
   loadComfyUI();
   if (!dialog.open) dialog.showModal();
 }
 
 async function loadComfyUI() {
-  setLocalMessage("", "");
   try {
     renderTarget(await api("/api/connection"));
   } catch (failure) {
@@ -2106,23 +2196,25 @@ async function loadComfyUI() {
   }
 }
 
-// COMFY_BASE_URL in .env ("custom") overrides the choice, so the page only reports it.
-function renderTarget({ target, url }) {
-  const custom = target === "custom";
-  for (const input of document.querySelectorAll(".target-choice input")) input.checked = input.value === target;
-  $(".target-choice").hidden = custom;
-  $(".custom-note").hidden = !custom;
-  if (custom) $(".custom-note code").textContent = url;
-  $("#runpod").hidden = target !== "runpod";
-  $("#local").hidden = target !== "local";
-  clearTimeout(state.podTimer);
-  if (target === "runpod") loadRunPod();
+function showTab(tab) {
+  for (const input of document.querySelectorAll(".target-choice input")) input.checked = input.value === tab;
+  for (const name of TABS) $(`#${name}`).hidden = name !== tab;
 }
 
-function setLocalMessage(text, tone) {
-  const message = $(".local-message");
-  message.textContent = text;
-  message.className = `settings-message local-message ${tone}`;
+// COMFY_BASE_URL in .env ("custom") overrides the choice, so the other tabs are
+// off until it's removed. Without it, the Custom tab only says how to set it.
+function renderTarget({ target, url }) {
+  const custom = target === "custom";
+  for (const input of document.querySelectorAll(".target-choice input")) {
+    input.disabled = custom && input.value !== "custom";
+  }
+  $(".custom-status").hidden = !custom;
+  $(".custom-on").hidden = !custom;
+  $(".custom-off").hidden = custom;
+  if (custom) $(".custom-url").textContent = url;
+  showTab(target);
+  clearTimeout(state.podTimer);
+  if (target === "runpod") loadRunPod();
 }
 
 // RunPod: at most one pod, through the app's server with the key from here.
@@ -2160,29 +2252,43 @@ async function loadRunPod() {
   $("#runpod-key").hidden = Boolean(key);
   $("#forget-key").hidden = !key;
   if (!key) {
-    for (const part of ["#runpod-start", "#runpod-running", ".pod-status"]) $(part).hidden = true;
+    for (const part of ["#runpod .pod-status", "#runpod-start", ".pod-costs", "#deploy", "#pause-pod", "#resume-pod", "#delete-pod"]) {
+      $(part).hidden = true;
+    }
     return;
+  }
+  // Nothing shown yet: say so while RunPod answers.
+  const blank = $("#runpod .pod-status").hidden && $("#runpod-start").hidden;
+  if (blank) {
+    $("#runpod .pod-status").replaceChildren(el("span", { class: "pod-state" }, spinner(), "Checking RunPod…"));
+    $("#runpod .pod-status").hidden = false;
   }
   try {
     renderRunPod(await runpodCall(""));
   } catch (failure) {
+    if (blank) $("#runpod .pod-status").hidden = true;
     setRunPodMessage(failure.message, "bad");
   }
 }
 
 function renderRunPod(runpod) {
   const { pod, gpus } = runpod;
-  $(".pod-status").hidden = !pod;
-  $("#runpod-running").hidden = !pod;
+  $("#runpod .pod-status").hidden = !pod;
+  $(".pod-costs").hidden = !pod;
   $("#runpod-start").hidden = Boolean(pod);
+  $("#deploy").hidden = Boolean(pod);
+  $("#delete-pod").hidden = !pod;
+  $("#pause-pod").hidden = !pod || pod.paused;
+  $("#resume-pod").hidden = !pod || !pod.paused;
   if (pod) {
     renderPod(pod);
     state.podTimer = setTimeout(() => {
       checkConnection();
       if ($("#comfyui-dialog").open) loadRunPod();
-    }, POD_POLL_MS);
+    }, pod.progress ? SETUP_POLL_MS : POD_POLL_MS);
     return;
   }
+  state.podStarted = null;
   const select = $("#runpod-start select");
   const chosen = select.value;
   select.replaceChildren(...gpus.map((gpu) => el("option", { value: gpu.id, selected: gpu.id === chosen || null },
@@ -2193,28 +2299,47 @@ function renderRunPod(runpod) {
   }
 }
 
-// A pod is setting up, ready, or paused; pausing keeps its disk, billed while idle.
+// A pod is setting up, ready, or paused. Pausing keeps its disk, billed while idle.
 function renderPod(pod) {
-  const ready = !pod.paused && $("#connection").dataset.state === "ok";
-  const idle = `$${pod.idle_cost_per_month.toFixed(0)}/month`;
-  const uptime = pod.started ? ` · up ${clock((Date.now() - new Date(pod.started)) / 1000)}` : "";
-  const status = pod.paused
-    ? el("span", { class: "pod-state" }, "Paused")
-    : el("span", { class: `pod-state${ready ? " ready" : ""}` },
-      ready ? null : el("span", { class: "spinner", "aria-hidden": "true" }),
-      ready ? "Ready" : "Setting up: downloading about 67 GB of models, roughly 25 minutes.");
+  const idle = `$${pod.idle_cost_per_hour.toFixed(2)}/hr`;
+  state.podStarted = !pod.paused && pod.started ? new Date(pod.started) : null;
   const parts = [
     el("strong", {}, pod.gpu || "Your pod"),
-    el("span", { class: "muted" }, pod.paused ? `disk ${idle}` : `$${(pod.cost_per_hour || 0).toFixed(2)}/hr${uptime}`),
-    status,
+    el("span", { class: "muted" }, pod.paused ? idle : `$${(pod.cost_per_hour || 0).toFixed(2)}/hr`,
+      el("span", { class: "pod-uptime" })),
+    podState(pod),
   ];
   if (pod.ssh && !pod.paused) parts.push(el("code", { class: "muted", title: "The setup log is /workspace/logs/setup.log" }, pod.ssh));
-  $(".pod-status").replaceChildren(...parts);
+  $("#runpod .pod-status").replaceChildren(...parts);
+  tickPod();
   $(".pod-costs").textContent = pod.paused
     ? `Its disk keeps the models for ${idle} until you delete it. Resume brings it back in a few minutes if its machine's GPU is free.`
-    : `Pause to stop paying for the GPU: the disk keeps the models for ${idle}, and it resumes in a few minutes. Delete removes everything.`;
-  $("#pause-pod").hidden = pod.paused;
-  $("#resume-pod").hidden = !pod.paused;
+    : `Pause to stop paying for the GPU. The disk keeps the models for ${idle}, and the pod resumes in a few minutes. Delete removes everything.`;
+}
+
+// What a running pod is doing, from the progress its setup reports.
+function podState(pod) {
+  const progress = pod.progress;
+  if (pod.paused) return el("span", { class: "pod-state" }, "Paused");
+  if (!progress && $("#connection").dataset.state === "ok") return el("span", { class: "pod-state ok" }, "Ready");
+  if (progress?.stage === "failed") {
+    return el("span", { class: "pod-state bad" }, "The setup failed. Delete the pod and deploy a new one.");
+  }
+  if (progress?.stage === "models" && progress.total) {
+    const gb = (bytes) => (bytes / 1e9).toFixed(1);
+    const percent = Math.min(100, (progress.done / progress.total) * 100);
+    return el("div", { class: "pod-progress" },
+      el("span", { class: "pod-state" }, spinner(), `Downloading models: ${gb(progress.done)} of ${gb(progress.total)} GB`),
+      el("div", { class: "meter" }, el("span", { style: `width: ${percent}%` })));
+  }
+  const doing = { install: "Installing ComfyUI", models: "Downloading models", start: "Starting ComfyUI" };
+  return el("span", { class: "pod-state" }, spinner(), doing[progress?.stage] || "Starting the pod");
+}
+
+// Runs every second, so the uptime counts up between polls.
+function tickPod() {
+  const uptime = $(".pod-uptime");
+  if (uptime) uptime.textContent = state.podStarted ? ` · up ${clock((Date.now() - state.podStarted) / 1000)}` : "";
 }
 
 function setRunPodMessage(text, tone) {
@@ -2238,7 +2363,7 @@ function setupRunPod() {
   });
   $("#runpod-start").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const button = $("[type=submit]", event.currentTarget);
+    const button = $("#deploy");
     button.disabled = true;
     setRunPodMessage("Starting…", "");
     try {
@@ -2254,11 +2379,11 @@ function setupRunPod() {
     }
   });
   $("#pause-pod").addEventListener("click", (event) => podAction(event.currentTarget, "/pause",
-    "Paused. The GPU is released; only the disk is billed now."));
+    "Paused. The GPU is released, so only the disk is billed now."));
   $("#resume-pod").addEventListener("click", (event) => podAction(event.currentTarget, "/resume",
     "Resuming. It's back in a few minutes.",
     "If its machine's GPU is taken, delete the pod and deploy a fresh one."));
-  // The first click asks; Delete removes the pod and its disk.
+  // The first click asks. The second removes the pod and its disk.
   $("#delete-pod").addEventListener("click", (event) => {
     const button = event.currentTarget;
     if (!button.classList.contains("btn-danger")) {
@@ -2301,8 +2426,12 @@ function setupComfyUI() {
     history.replaceState(null, "", params.size ? `?${params}` : "/");
   });
   $(".target-choice").addEventListener("change", async (event) => {
+    const tab = event.target.value;
+    showTab(tab);
+    if (tab === "custom") return;
+    showConnecting(tab);
     try {
-      renderTarget(await api("/api/connection", { method: "PUT", json: { target: event.target.value } }));
+      renderTarget(await api("/api/connection", { method: "PUT", json: { target: tab } }));
     } catch (failure) {
       setRunPodMessage(failure.message, "bad");
       loadComfyUI();
@@ -2312,7 +2441,7 @@ function setupComfyUI() {
   $("#test-local").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     button.disabled = true;
-    setLocalMessage("Testing…", "");
+    showConnecting("local");
     await checkConnection();
     button.disabled = false;
   });
@@ -2342,6 +2471,7 @@ function init() {
   });
   setInterval(() => {
     updateClock();
+    tickPod();
     if (state.view === "queue") tickQueue();
   }, 1000);
   route();

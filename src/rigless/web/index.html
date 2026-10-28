@@ -95,12 +95,13 @@
             <button class="btn btn-ghost add-person" type="button" hidden>+ Add person</button>
 
             <label class="card field notes-field">
-              <span class="card-head"><span class="card-title">Prompt</span><span class="optional">Optional</span></span>
+              <span class="card-head"><span class="card-title">Prompt</span></span>
               <span class="prompt-box">
                 <span class="prompt-marks" aria-hidden="true"></span>
                 <textarea name="description" rows="3"></textarea>
               </span>
             </label>
+            <ul class="tag-menu" role="listbox" aria-label="Characters to tag" hidden></ul>
 
             <section class="card notes" hidden>
               <h2 class="card-title">Notes on the footage</h2>
@@ -120,12 +121,11 @@
             <p class="form-error" role="alert" hidden></p>
             <div class="generate-row">
               <div class="quality" role="radiogroup" aria-label="Quality">
-                <label title="480p, quicker: for trying things out"><input type="radio" name="quality" value="draft"><span>Draft</span></label>
-                <label title="768p, the full quality"><input type="radio" name="quality" value="full" checked><span>Full</span></label>
+                <label title="Quicker, for trying things out"><input type="radio" name="quality" value="draft"><span>Draft <small>480p</small></span></label>
+                <label title="The full quality"><input type="radio" name="quality" value="full" checked><span>Full <small>768p</small></span></label>
               </div>
               <button class="btn btn-primary btn-large" type="button" id="generate" disabled>Generate</button>
             </div>
-            <p class="next-step" aria-live="polite"></p>
             <p class="powered">Powered by <a class="license-link" href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE" target="_blank" rel="noopener">MiniMax H3</a><span class="report" hidden> · <a class="report-link" href="#">Report misuse</a></span></p>
           </div>
         </aside>
@@ -248,10 +248,9 @@
       <div class="target-choice" role="radiogroup" aria-label="Where Rigless renders">
         <label><input type="radio" name="target" value="runpod"><span>RunPod</span></label>
         <label><input type="radio" name="target" value="local"><span>This computer</span></label>
+        <label><input type="radio" name="target" value="custom"><span>Custom</span></label>
       </div>
       <div class="dialog-body">
-        <p class="muted custom-note" hidden>Rigless sends its work to <code></code>, set by <code>COMFY_BASE_URL</code> in <code>.env</code>. Remove it there to choose here.</p>
-
         <section class="stack" id="runpod" hidden>
           <form id="runpod-key" class="stack" hidden>
             <p class="muted">Rent a GPU in your own RunPod account. Deploy sets it up and connects Rigless to it. Your API key stays in this browser.</p>
@@ -261,31 +260,43 @@
             </label>
             <div class="card-actions"><button class="btn btn-primary" type="submit">Use this key</button></div>
           </form>
-          <p class="pod-status" hidden></p>
+          <div class="pod-status" hidden></div>
           <form id="runpod-start" class="stack" hidden>
             <label class="field">
               <span class="label">GPU</span>
               <select name="gpu"></select>
             </label>
-            <p class="muted">Starts a pod with a 100 GB disk wherever RunPod has this GPU free. It downloads the models first, roughly 25 minutes. Afterwards you can pause it (the disk costs $20/month while paused) or delete it.</p>
-            <div class="card-actions"><button class="btn btn-primary" type="submit">Deploy</button></div>
+            <p class="muted">Starts a pod with a 100 GB disk wherever RunPod has this GPU free, then downloads about 67 GB of models. After that you can pause it, which keeps the disk for about $0.03/hr, or delete it.</p>
           </form>
-          <div class="stack" id="runpod-running" hidden>
-            <p class="muted pod-costs"></p>
-            <div class="card-actions">
-              <button class="btn" type="button" id="pause-pod">Pause</button>
-              <button class="btn" type="button" id="resume-pod" hidden>Resume</button>
-              <button class="btn" type="button" id="delete-pod">Delete</button>
-            </div>
-          </div>
+          <p class="muted pod-costs" hidden></p>
           <p class="settings-message runpod-message" aria-live="polite"></p>
-          <p class="key-line"><button class="link" type="button" id="forget-key" hidden>Forget key</button></p>
+          <div class="card-actions runpod-actions">
+            <button class="btn" type="button" id="forget-key" hidden>Forget key</button>
+            <button class="btn" type="button" id="pause-pod" hidden>Pause</button>
+            <button class="btn" type="button" id="resume-pod" hidden>Resume</button>
+            <button class="btn" type="button" id="delete-pod" hidden>Delete</button>
+            <button class="btn btn-primary" type="submit" form="runpod-start" id="deploy" hidden>Deploy</button>
+          </div>
         </section>
 
         <section class="stack" id="local" hidden>
-          <p class="muted">Rigless sends its work to ComfyUI on this computer through comfy-api-proxy at <code>http://127.0.0.1:8189</code>. It needs a GPU with 48 GB or more, and both running first; the README shows how.</p>
-          <p class="settings-message local-message" aria-live="polite"></p>
+          <div class="pod-status">
+            <strong>ComfyUI on this computer</strong>
+            <code class="muted">127.0.0.1:8189</code>
+            <span class="pod-state local-state"></span>
+          </div>
+          <p class="muted">Needs a GPU with 48 GB or more, with ComfyUI and comfy-api-proxy running. The README shows how.</p>
           <div class="card-actions"><button class="btn" type="button" id="test-local">Test</button></div>
+        </section>
+
+        <section class="stack" id="custom" hidden>
+          <div class="pod-status custom-status" hidden>
+            <strong>Your ComfyUI</strong>
+            <code class="muted custom-url"></code>
+            <span class="pod-state custom-state"></span>
+          </div>
+          <p class="muted custom-off">To render on ComfyUI anywhere else, set <code>COMFY_BASE_URL</code> in <code>.env</code> to its comfy-api-proxy address, and <code>COMFY_API_KEY</code> to the proxy's token if it has one. Then restart Rigless.</p>
+          <p class="muted custom-on" hidden>Set by <code>COMFY_BASE_URL</code> in <code>.env</code>. To choose RunPod or this computer here, remove it and restart Rigless.</p>
         </section>
       </div>
     </dialog>

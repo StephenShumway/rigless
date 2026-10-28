@@ -101,7 +101,6 @@ code { font-family: var(--mono); font-size: 13px; color: var(--text-primary); }
 :focus-visible { outline: none; box-shadow: var(--ring); }
 
 .label { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
-.optional { margin-left: 6px; font-size: 13px; font-weight: 400; color: var(--text-muted); }
 .muted { color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
 .count { margin-left: auto; color: var(--text-secondary); font: 400 12px/1 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .count-chip {
@@ -175,6 +174,7 @@ code { font-family: var(--mono); font-size: 13px; color: var(--text-primary); }
 .connection-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--text-muted); }
 .connection[data-state="ok"] .connection-dot { background: var(--success); }
 .connection[data-state="bad"] .connection-dot { background: var(--error); }
+.connection[data-state="checking"] .connection-dot { animation: pulse 1s var(--ease) infinite; }
 
 main { min-height: 0; overflow: auto; }
 .view { min-height: 100%; display: flex; flex-direction: column; }
@@ -472,7 +472,7 @@ body.dragging .pictures .picture-add { border-color: var(--accent-ring); }
 .field textarea { min-height: 76px; resize: vertical; }
 /* The prompt takes whatever height the panel has left. Its tags (@1, @2) are
    highlighted by a copy of the text behind the box, in the same font and wrapping. */
-.notes-field { flex: 1 0 auto; display: flex; flex-direction: column; padding: 0; background: none; }
+.notes-field { flex: 1 0 auto; display: flex; flex-direction: column; }
 .prompt-box { flex: 1; display: grid; min-height: 76px; border-radius: var(--radius-md); background: var(--surface-well); }
 .prompt-box > * { grid-area: 1 / 1; }
 .notes-field textarea, .prompt-marks {
@@ -488,6 +488,12 @@ body.dragging .pictures .picture-add { border-color: var(--accent-ring); }
 .notes-field textarea { position: relative; background: transparent; resize: none; }
 .prompt-marks { overflow: hidden; color: transparent; white-space: pre-wrap; pointer-events: none; }
 .prompt-marks mark { border-radius: 4px; background: var(--tag); color: transparent; box-shadow: 0 0 0 2px var(--tag); }
+/* The @ menu under the prompt: one row per character to tag. */
+.tag-menu { position: fixed; z-index: 30; display: grid; gap: 2px; margin: 0; padding: 4px; list-style: none; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-card); box-shadow: 0 8px 24px rgb(0 0 0 / 0.35); }
+.tag-option { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: var(--radius-sm); font-size: 14px; cursor: pointer; }
+.tag-option:hover, .tag-option[aria-selected="true"] { background: var(--surface-active); }
+.tag-option img, .tag-thumb { flex: none; width: 32px; height: 32px; border-radius: 6px; background: var(--surface-well); object-fit: cover; }
+.tag-name { margin-left: auto; color: var(--text-muted); font: 500 12px/1 var(--mono); }
 .field select {
   height: 36px;
   padding: 0 32px 0 10px;
@@ -497,7 +503,8 @@ body.dragging .pictures .picture-add { border-color: var(--accent-ring); }
 }
 .field input::placeholder, .field textarea::placeholder { color: var(--text-placeholder); }
 .field input:hover, .field textarea:hover, .field select:hover { border-color: var(--border-strong); }
-.field input:focus, .field textarea:focus, .field select:focus { border-color: transparent; outline: none; box-shadow: var(--ring); }
+/* On the field's edge, where the hover border is, not out past it like --ring. */
+.field input:focus, .field textarea:focus, .field select:focus { border-color: var(--accent-ring); outline: none; box-shadow: 0 0 0 1px var(--accent-ring); }
 
 .notes ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .notes li { padding: 8px 10px; border: 1px solid rgb(247 181 106 / 0.4); border-radius: var(--radius-sm); background: var(--warning-tint); color: var(--text-primary); font-size: 13px; }
@@ -539,6 +546,8 @@ body.dragging .pictures .picture-add { border-color: var(--accent-ring); }
   cursor: pointer;
   transition: color 0.12s var(--ease), background-color 0.12s var(--ease);
 }
+.quality span { gap: 5px; }
+.quality small { color: var(--text-muted); font-size: 11px; font-weight: 500; }
 .quality span:hover { color: var(--text-primary); }
 .quality input:checked + span { background: var(--surface-active); color: var(--text-primary); }
 .quality input:focus-visible + span { box-shadow: var(--ring); }
@@ -551,8 +560,6 @@ body.dragging .pictures .picture-add { border-color: var(--accent-ring); }
   font-weight: 500;
   line-height: 18px;
 }
-.next-step { color: var(--text-secondary); font-size: 13px; }
-.next-step:empty { display: none; }
 .powered { color: var(--text-muted); font-size: 13px; text-align: center; }
 .powered a { color: var(--text-secondary); text-underline-offset: 2px; }
 .powered a:hover { color: var(--text-primary); }
@@ -960,12 +967,15 @@ body.dragging .monitor[data-state="empty"] .monitor-frame { border-color: var(--
 .target-choice { display: flex; height: 40px; padding: 0 10px; border-bottom: 1px solid var(--border-default); }
 .target-choice label { position: relative; display: flex; }
 .target-choice input { position: absolute; opacity: 0; pointer-events: none; }
-.custom-note code { font-size: 12px; }
-.key-line:has(#forget-key[hidden]) { display: none; }
+.target-choice input:disabled + span { color: var(--text-disabled); cursor: default; }
+.runpod-actions:not(:has(> :not([hidden]))) { display: none; }
+#forget-key { margin-right: auto; }
 .pod-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 12px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-well); font-size: 14px; }
 .pod-status code { font-size: 12px; }
-.pod-state { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
-.pod-state.ready { color: var(--success); }
+.pod-state { flex-basis: 100%; display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.pod-state.ok { color: var(--success); }
+.pod-state.bad { color: var(--error); }
+.pod-progress { flex-basis: 100%; display: grid; gap: 10px; }
 .settings-message { color: var(--text-secondary); font-size: 13px; }
 .settings-message:empty { display: none; }
 .settings-message.ok { color: var(--success); }

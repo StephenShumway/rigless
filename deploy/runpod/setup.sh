@@ -23,6 +23,14 @@ H3_RELAY=e2a7665b6eb8ea37a88c0de2c9c6b69a8f7c9220  # akatz-ai/h3-relay v2.0.1, G
 export UV_PYTHON_INSTALL_DIR=/workspace/uv/python UV_LINK_MODE=copy
 export UV_PYTHON_PREFERENCE=only-managed
 
+# Until comfy-api-proxy takes port 8189, the app reads the setup's progress there.
+PROGRESS=/workspace/logs/progress
+mkdir -p "$PROGRESS"
+echo '{"stage": "install"}' > "$PROGRESS/progress.json"
+trap 'echo "{\"stage\": \"failed\"}" > "$PROGRESS/progress.json"' ERR
+pkill -f "[h]ttp.server 8189" || true
+nohup python3 -m http.server 8189 --directory "$PROGRESS" > /dev/null 2>&1 < /dev/null &
+
 command -v uv > /dev/null || curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
 CUDA_MAJOR=$(nvidia-smi | grep -oE "CUDA Version: [0-9]+" | grep -oE "[0-9]+$")
@@ -43,5 +51,7 @@ uv pip install --python "$VENV/bin/python" -r "$COMFY/requirements.txt" scipy co
 
 export UV_PROJECT_ENVIRONMENT=/workspace/rigless-venv
 uv sync --project "$REPO" --no-dev
-uv run --project "$REPO" --no-dev python "$REPO/scripts/download_models.py" --models-dir "$COMFY/models"
+uv run --project "$REPO" --no-dev python "$REPO/scripts/download_models.py" \
+  --models-dir "$COMFY/models" --progress "$PROGRESS/progress.json"
+echo '{"stage": "start"}' > "$PROGRESS/progress.json"
 bash "$REPO/deploy/runpod/start.sh"

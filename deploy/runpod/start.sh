@@ -36,6 +36,7 @@ fi
 # that has since restarted, and the new one then dies on "address in use".
 "$VENV/bin/comfy-api-proxy" stop > /dev/null 2>&1 || true
 pkill -f "[c]omfy-api-proxy start" || true
+pkill -f "[h]ttp.server 8189" || true  # setup.sh's progress page
 for _ in $(seq 15); do
   ss -ltn | grep ":8189 " > /dev/null || break
   sleep 1

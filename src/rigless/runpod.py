@@ -2,10 +2,10 @@
 
 Deploy makes a pod wherever RunPod has the chosen GPU free, with a 100GB disk for
 ComfyUI, its environments and the models. The pod fetches the latest code, runs
-the setup (`deploy/runpod/setup.sh`, mostly downloads, roughly 25 minutes), and
-serves ComfyUI behind comfy-api-proxy on port 8189. Pausing releases the GPU and
-keeps the disk (billed while paused) to resume in minutes; deleting removes both,
-so nothing is billed afterwards.
+the setup (`deploy/runpod/setup.sh`, mostly downloads, reporting its progress on
+port 8189), and then serves ComfyUI behind comfy-api-proxy on that port. Pausing
+releases the GPU and keeps the disk (billed while paused) to resume in minutes.
+Deleting removes both, so nothing is billed afterwards.
 
 The user's API key comes with each call; Rigless passes it to RunPod and never
 stores it. RunPod's REST API rejects calls straight from a browser, so the app's
@@ -17,6 +17,7 @@ Typical usage example:
   pod = runpod.start(key, "NVIDIA A40", env={"PROXY_TOKEN": token})
 """
 
+import http.client
 import json
 import re
 import urllib.error
@@ -32,6 +33,7 @@ OURS = re.compile(rf"{re.escape(NAME)}(-migration-\d+)?")
 DISK_GB = 100  # ~67GB of models plus ComfyUI and two environments, ~85GB in all
 MIN_VRAM_GB = 48  # the H3 swap's peak, with the text encoder released before sampling
 IDLE_PER_GB_MONTH = 0.20  # RunPod's price for a paused pod's disk (Oct 2026)
+HOURS_PER_MONTH = 730
 # comfy-kitchen's fast int8 kernels need a CUDA 13 driver (12.8 is ~1.75x slower);
 # any 13.x will do, and RunPod's H100s run 13.2 (Oct 26).
 MIN_CUDA = "13.0"
@@ -181,9 +183,31 @@ def delete(key: str) -> None:
         _rest(key, "DELETE", f"/pods/{found['id']}")
 
 
-def idle_cost_per_month(found: Mapping[str, Any]) -> float:
-    """What a pod's disk costs a month while the pod is paused, in dollars."""
-    return float(found.get("volumeInGb") or 0) * IDLE_PER_GB_MONTH
+def idle_cost_per_hour(found: Mapping[str, Any]) -> float:
+    """What a pod's disk costs an hour while the pod is paused, in dollars."""
+    return float(found.get("volumeInGb") or 0) * IDLE_PER_GB_MONTH / HOURS_PER_MONTH
+
+
+def setup_progress(pod_url: str) -> dict[str, Any] | None:
+    """How far a new pod's setup has got, or None if the pod isn't saying.
+
+    While it sets up, the pod serves `progress.json` on the port that
+    comfy-api-proxy takes over once ComfyUI is running.
+
+    Returns:
+        The stage, "install", "models" or "start", with "done" and "total"
+        bytes for "models". "failed" means the setup stopped.
+    """
+    request = urllib.request.Request(
+        f"{pod_url}/progress.json", headers={"User-Agent": "rigless"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            progress = json.load(response)
+    # Not set up yet, or comfy-api-proxy has the port.
+    except (OSError, ValueError, http.client.HTTPException):
+        return None
+    return progress if isinstance(progress, dict) else None
 
 
 def ssh_command(found: Mapping[str, Any]) -> str | None:

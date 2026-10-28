@@ -6,7 +6,9 @@ Comfy-Org/sam3.1, Qwen3-VL-8B (the describer) from Comfy-Org/Qwen-Image-2.1,
 and the Rigless Swap LoRA from its own repository. About 60GB in all. Files
 already present are skipped, and an interrupted download resumes, here (a few
 tries per file) or on the next run. HF_TOKEN in
-`.env` is sent along if set, for a private repository.
+`.env` is sent along if set, for a private repository. With --progress, the
+bytes downloaded so far and in all are kept in a JSON file, which a new RunPod
+pod serves to the app while it sets up.
 
 Typical usage example:
 
@@ -15,9 +17,11 @@ Typical usage example:
 """
 
 import argparse
+import json
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 from rigless import config, describe, selection, swap
@@ -29,6 +33,7 @@ QWEN21 = "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main"
 SWAP_LORA_REPO = "https://huggingface.co/StephenShumway/rigless-lora/resolve/main"
 TIMEOUT = 60  # seconds without data before a download counts as stalled
 TRIES = 3
+PROGRESS_EVERY = 2  # seconds between progress writes
 
 # Each model is (download URL, subfolder of ComfyUI's models folder).
 MODELS = [
@@ -49,6 +54,7 @@ def parse_args() -> argparse.Namespace:
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--models-dir", type=Path, help="ComfyUI's models folder")
     target.add_argument("--check", action="store_true", help="only check every link")
+    parser.add_argument("--progress", type=Path, help="a JSON file to keep updated")
     return parser.parse_args()
 
 
@@ -73,8 +79,26 @@ def check(url: str) -> None:
     print(f"ok  {size / 1e9:6.2f}GB  {url}")
 
 
-def download(url: str, dest: Path) -> None:
+def size(url: str) -> int:
+    """The size of a model's download in bytes, or 0 if the server won't say."""
+    head = request(url)
+    head.method = "HEAD"
+    try:
+        with urllib.request.urlopen(head, timeout=TIMEOUT) as response:
+            return int(response.headers.get("Content-Length", 0))
+    except OSError:
+        return 0
+
+
+def download(
+    url: str, dest: Path, on_progress: Callable[[int], None] = lambda done: None
+) -> None:
     """Downloads one model to dest, resuming a partial dest.part if present.
+
+    Args:
+        url: The model's download link.
+        dest: Where the model goes.
+        on_progress: Called after each chunk with the bytes of dest so far.
 
     Raises:
         OSError: The download failed or stopped early; dest.part is kept.
@@ -92,6 +116,7 @@ def download(url: str, dest: Path) -> None:
             while chunk := response.read(1 << 20):
                 file.write(chunk)
                 done += len(chunk)
+                on_progress(done)
                 print(
                     f"\r  {done / 1e9:6.2f} / {total / 1e9:.2f}GB", end="", flush=True
                 )
@@ -102,28 +127,68 @@ def download(url: str, dest: Path) -> None:
     part.rename(dest)
 
 
-def main() -> None:
-    """Checks or downloads every model."""
-    args = parse_args()
-    for url, folder in MODELS:
-        if args.check:
-            check(url)
-            continue
-        dest = args.models_dir / folder / url.rsplit("/", 1)[1]
+def fetch_all(models_dir: Path, progress: Path | None = None) -> None:
+    """Downloads every model that models_dir doesn't have yet.
+
+    Args:
+        models_dir: ComfyUI's models folder.
+        progress: A file to keep updated, as {"stage": "models", "done": bytes,
+            "total": bytes}, or None.
+
+    Raises:
+        OSError: A model failed to download after a few tries.
+    """
+    wanted = [
+        (url, models_dir / folder / url.rsplit("/", 1)[1]) for url, folder in MODELS
+    ]
+    sizes = [
+        dest.stat().st_size if dest.exists() else size(url) for url, dest in wanted
+    ]
+    total = sum(sizes)
+    finished = sum(
+        length for (_, dest), length in zip(wanted, sizes, strict=True) if dest.exists()
+    )
+    written = 0.0
+
+    def report(done: int, now: bool = False) -> None:
+        nonlocal written
+        if progress is None or not now and time.monotonic() - written < PROGRESS_EVERY:
+            return
+        written = time.monotonic()
+        state = {"stage": "models", "done": finished + done, "total": total}
+        part = progress.with_name(progress.name + ".part")
+        part.write_text(json.dumps(state))
+        part.replace(progress)
+
+    report(0, now=True)
+    for url, dest in wanted:
+        name = f"{dest.parent.name}/{dest.name}"
         if dest.exists():
-            print(f"have {folder}/{dest.name}")
+            print(f"have {name}")
             continue
-        print(f"get  {folder}/{dest.name}")
+        print(f"get  {name}")
         dest.parent.mkdir(parents=True, exist_ok=True)
         for attempt in range(1, TRIES + 1):
             try:
-                download(url, dest)
+                download(url, dest, report)
                 break
             except OSError as error:
                 if attempt == TRIES:
                     raise
                 print(f"  {error}; trying again")
                 time.sleep(5)
+        finished += dest.stat().st_size
+    report(0, now=True)
+
+
+def main() -> None:
+    """Checks or downloads every model."""
+    args = parse_args()
+    if args.check:
+        for url, _ in MODELS:
+            check(url)
+    else:
+        fetch_all(args.models_dir, args.progress)
 
 
 if __name__ == "__main__":

@@ -922,7 +922,7 @@ def render(store: Store, project_id: str, options: Mapping[str, Any]) -> None:
         step="results",
         activity=None,
         best=best,
-        error=None if best is not None else "Every take failed; see the takes for why.",
+        error=None if best is not None else "Every take failed. See the takes for why.",
     )
 
 

@@ -203,8 +203,8 @@ def create_app(root: Path) -> FastAPI:
             duration = video_prep.probe(folder / dance_path).duration
             if duration > MAX_FOOTAGE_SECONDS:
                 raise ValueError(
-                    f"Use a clip up to {MAX_FOOTAGE_SECONDS // 60} minutes long; "
-                    f"this one is {duration:.0f} seconds."
+                    f"Use a clip up to {MAX_FOOTAGE_SECONDS // 60} minutes long. "
+                    f"This one is {duration:.0f} seconds."
                 )
             if end is None:
                 end = start + video_prep.MAX_TRIM_SECONDS
@@ -529,16 +529,18 @@ def _runpod_state(key: str) -> dict[str, Any]:
     current = config.connection()
     if current.target == "runpod" and current.key and current.url != url:
         config.save_pod(url, current.key)
+    paused = pod["desiredStatus"] == "EXITED"
     return {
         "pod": {
             "id": pod["id"],
-            "paused": pod["desiredStatus"] == "EXITED",
-            "idle_cost_per_month": runpod.idle_cost_per_month(pod),
+            "paused": paused,
+            "idle_cost_per_hour": runpod.idle_cost_per_hour(pod),
             "gpu": runpod.gpu_name(pod),
             "cost_per_hour": pod.get("costPerHr"),
             "started": pod.get("lastStartedAt"),
             "url": url,
             "ssh": runpod.ssh_command(pod),
+            "progress": None if paused else runpod.setup_progress(url),
         },
         "gpus": gpus,
     }

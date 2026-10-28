@@ -452,6 +452,7 @@ def test_connection_follows_a_pod_runpod_moved_to_another_machine(
     config.save_pod(runpod.proxy_url("old-id"), "token")
     moved = {"id": "new-id", "name": runpod.NAME, "desiredStatus": "RUNNING"}
     monkeypatch.setattr(runpod, "pod", lambda key: moved)
+    monkeypatch.setattr(runpod, "setup_progress", lambda url: None)
 
     client.get("/api/runpod", headers={"X-RunPod-Key": "rk"})
 

@@ -26,10 +26,10 @@ NOTICE = (
     "Rendering with it means agreeing to that license, its use restrictions and "
     "its Acceptable Use Policy.",
     "Among other things, you agree to use only footage and pictures you have the "
-    "rights to, of people who consented or who aren't real; never to impersonate, "
-    "harass, deceive or harm anyone, or to involve minors in anything harmful; to "
-    "say clearly that a video is AI-generated wherever you share it; and never to "
-    "use what H3 makes to train or improve another AI model.",
+    "rights to, of people who consented or who aren't real. You agree never to "
+    "impersonate, harass, deceive or harm anyone, or to involve minors in anything "
+    "harmful. You agree to say clearly that a video is AI-generated wherever you "
+    "share it, and never to use what H3 makes to train or improve another AI model.",
     "MiniMax H3 can't be used in the United States, the European Union, the United "
     "Kingdom or South Korea without your own authorization from MiniMax.",
 )

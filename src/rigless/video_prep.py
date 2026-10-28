@@ -91,8 +91,8 @@ def check_trim(start: float, end: float | None, duration: float) -> tuple[float,
         raise ValueError(f"Keep at least {MIN_TRIM_SECONDS:g} second of the clip.")
     if length > MAX_TRIM_SECONDS + 1e-6:
         raise ValueError(
-            f"Trim the clip to {MAX_TRIM_SECONDS:g} seconds or less; "
-            f"this part is {length:.1f}."
+            f"Trim the clip to {MAX_TRIM_SECONDS:g} seconds or less. "
+            f"This part is {length:.1f}."
         )
     return start, end
 
