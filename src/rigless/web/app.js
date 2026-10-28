@@ -2348,7 +2348,6 @@ function renderPod(pod) {
       el("span", { class: "muted" }, el("span", { class: "pod-price" }), el("span", { class: "pod-uptime" })),
       el("span", { class: "pod-state" }, el("span", { class: "state-text" })),
       el("div", { class: "meter", hidden: true }, el("span")),
-      el("code", { class: "muted pod-ssh", title: "The setup log is /workspace/logs/setup.log" }),
     );
   }
   const idle = `$${pod.idle_cost_per_hour.toFixed(2)}/hr`;
@@ -2368,9 +2367,6 @@ function renderPod(pod) {
   meter.hidden = fraction === null;
   if (fraction !== null) $("span", meter).style.width = `${Math.min(100, fraction * 100)}%`;
 
-  const ssh = $(".pod-ssh", card);
-  ssh.textContent = pod.ssh || "";
-  ssh.hidden = !pod.ssh || pod.paused;
   $(".pod-costs").textContent = pod.paused
     ? `Its disk keeps the models for ${idle} until you delete it. Resume brings it back in a few minutes if its machine's GPU is free.`
     : `Pause to stop paying for the GPU. The disk keeps the models for ${idle}, and the pod resumes in a few minutes. Delete removes everything.`;

@@ -227,14 +227,6 @@ def setup_progress(pod_url: str) -> dict[str, Any] | None:
     return progress if isinstance(progress, dict) else None
 
 
-def ssh_command(found: Mapping[str, Any]) -> str | None:
-    """Returns the command to SSH into a pod, or None until it has an address."""
-    port = (found.get("portMappings") or {}).get("22")
-    if not found.get("publicIp") or not port:
-        return None
-    return f"ssh root@{found['publicIp']} -p {port}"
-
-
 def gpu_name(found: Mapping[str, Any]) -> str | None:
     """Returns a pod's GPU as people call it, such as "H100 SXM", or None if unknown."""
     machine = found.get("machine") or {}

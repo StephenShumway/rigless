@@ -568,7 +568,6 @@ def _runpod_state(key: str) -> dict[str, Any]:
             "cost_per_hour": pod.get("costPerHr"),
             "started": pod.get("lastStartedAt"),
             "url": url,
-            "ssh": runpod.ssh_command(pod),
             "progress": progress,
         },
         "gpus": gpus,
