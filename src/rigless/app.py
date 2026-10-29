@@ -515,7 +515,9 @@ def main() -> None:
     if not args.no_browser:
         url = f"http://127.0.0.1:{args.port}"
         threading.Timer(1.5, webbrowser.open, [url]).start()
-    uvicorn.run(app, host="127.0.0.1", port=args.port)
+    # An open page keeps connections alive (a playing take), and uvicorn would
+    # otherwise wait on them after Ctrl+C until the page is closed.
+    uvicorn.run(app, host="127.0.0.1", port=args.port, timeout_graceful_shutdown=2)
 
 
 def _connection() -> dict[str, Any]:

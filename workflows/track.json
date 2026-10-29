@@ -1,0 +1,124 @@
+{
+  "sam": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "sam3.1_multiplex_fp16.safetensors"
+    }
+  },
+  "forward_file": {
+    "class_type": "LoadVideo",
+    "inputs": {
+      "file": "input.mp4"
+    }
+  },
+  "forward": {
+    "class_type": "GetVideoComponents",
+    "inputs": {
+      "video": [
+        "forward_file",
+        0
+      ]
+    }
+  },
+  "part_0": {
+    "class_type": "ImageFromBatch",
+    "inputs": {
+      "image": [
+        "forward",
+        0
+      ],
+      "batch_index": 0,
+      "length": 480
+    }
+  },
+  "first_0": {
+    "class_type": "ImageFromBatch",
+    "inputs": {
+      "image": [
+        "part_0",
+        0
+      ],
+      "batch_index": 0,
+      "length": 1
+    }
+  },
+  "detect_0": {
+    "class_type": "SAM3_Detect",
+    "inputs": {
+      "model": [
+        "sam",
+        0
+      ],
+      "image": [
+        "first_0",
+        0
+      ],
+      "positive_coords": "[{\"x\": 640, \"y\": 360}]",
+      "threshold": 0.5,
+      "refine_iterations": 2,
+      "individual_masks": false
+    }
+  },
+  "track_0": {
+    "class_type": "SAM3_VideoTrack",
+    "inputs": {
+      "images": [
+        "part_0",
+        0
+      ],
+      "model": [
+        "sam",
+        0
+      ],
+      "initial_mask": [
+        "detect_0",
+        0
+      ],
+      "detection_threshold": 0.5,
+      "max_objects": 1,
+      "detect_interval": 1
+    }
+  },
+  "masks_0": {
+    "class_type": "SAM3_TrackToMask",
+    "inputs": {
+      "track_data": [
+        "track_0",
+        0
+      ],
+      "object_indices": ""
+    }
+  },
+  "mask_images_0": {
+    "class_type": "MaskToImage",
+    "inputs": {
+      "mask": [
+        "masks_0",
+        0
+      ]
+    }
+  },
+  "video_0": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "mask_images_0",
+        0
+      ],
+      "fps": 24.0
+    }
+  },
+  "save_0": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "video_0",
+        0
+      ],
+      "filename_prefix": "rigless/track",
+      "format": "auto",
+      "codec": "auto",
+      "format.codec": "auto"
+    }
+  }
+}

@@ -137,5 +137,14 @@ def test_a_slow_pod_stretches_the_steps_still_to_come() -> None:
     assert estimate["seconds_left"] == pytest.approx(8 * installs_left + download)
 
 
+def test_a_fast_pods_share_done_is_the_real_time_it_has_taken() -> None:
+    # Its installs took a minute, where the typical times add up to eight.
+    progress = {"stage": "models", "started": 0.0, "since": 60.0}
+
+    estimate = runpod.setup_estimate(progress, now=72.0)
+
+    assert estimate["fraction"] == pytest.approx(72 / (72 + estimate["seconds_left"]))
+
+
 def test_a_failed_setup_has_no_estimate() -> None:
     assert runpod.setup_estimate({"stage": "failed"}, now=0.0) == {}

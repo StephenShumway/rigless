@@ -50,7 +50,6 @@ from rigless.selection import Anchor
 logger = logging.getLogger(__name__)
 FPS = swap.FPS  # the footage is readied at H3's frame rate, so frames line up
 MAX_SIDE = 1280  # enough for the taps and tracking; H3 renders smaller
-OUTPUT_SIDE = 1920  # finished takes are pasted onto the footage at up to full HD
 POSTER_DELAY = 12  # frames into the trim for the shoot's thumbnail, past any fade-in
 RECENT_CHARACTERS = 8
 MAX_PEOPLE = len(selection.TINTS)
@@ -918,8 +917,6 @@ def render(store: Store, project_id: str, options: Mapping[str, Any]) -> None:
         for person, share, found in zip(people, shares, tracked["people"], strict=True)
     ]
     prompt = _prompt(store, project_id, pictures)
-    store.set(project_id, activity=activity("Getting the full-size footage ready"))
-    full = _full_size_part(folder, project, start, stop)
     store.set(project_id, activity=activity("Rendering", fraction=0.0))
     for index, take in enumerate(
         swap.render_takes(
@@ -930,7 +927,6 @@ def render(store: Store, project_id: str, options: Mapping[str, Any]) -> None:
             seeds=seeds,
             out_dir=folder / f"render-{datetime.now():%H%M%S}",
             sound=(folder / project["inputs"]["dance"], start / FPS),
-            full=full,
             resolution=resolution,
             on_progress=progress,
         )
@@ -973,30 +969,6 @@ def _best(takes: list[TakeState]) -> int | None:
             take["score"],
         ),
     )["seed"]
-
-
-def _full_size_part(folder: Path, project: Project, start: int, stop: int) -> Path:
-    """Returns the trimmed part at up to OUTPUT_SIDE, frame for frame.
-
-    The footage at full size is made once per shoot, the same way as the
-    footage itself, so its frames line up with the ones that were tracked.
-    """
-    footage = folder / "footage-full.mp4"
-    if not footage.exists():
-        dance = folder / project["inputs"]["dance"]
-        making = folder / "footage-full.partial.mp4"
-        video_prep.conform(
-            dance,
-            making,
-            start=0.0,
-            end=video_prep.probe(dance).duration,
-            fps=FPS,
-            max_side=OUTPUT_SIDE,
-        )
-        making.replace(footage)
-    part = folder / "selection" / "part-full.mp4"
-    video_prep.cut_frames(footage, part, start, stop)
-    return part
 
 
 def _refuse_unsafe(store: Store, project_id: str) -> None:

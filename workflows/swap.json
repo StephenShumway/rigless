@@ -1,0 +1,581 @@
+{
+  "model": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "shift": {
+    "class_type": "MiniMaxH3SigmaShift",
+    "inputs": {
+      "model": [
+        "model",
+        0
+      ],
+      "shift_video": 12.0,
+      "shift_audio": 3.0
+    }
+  },
+  "attention": {
+    "class_type": "ModelAttentionBackend",
+    "inputs": {
+      "model": [
+        "shift",
+        0
+      ],
+      "attention": "comfy kitchen attention"
+    }
+  },
+  "turbo": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "attention",
+        0
+      ],
+      "lora_name": "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "swap_lora": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "turbo",
+        0
+      ],
+      "lora_name": "rigless-lora-v1.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "text": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+      "type": "minimax",
+      "device": "default"
+    }
+  },
+  "text_device": {
+    "class_type": "SelectCLIPDevice",
+    "inputs": {
+      "clip": [
+        "text",
+        0
+      ],
+      "device": "gpu:0"
+    }
+  },
+  "text_memory": {
+    "class_type": "H3RelayTextMemory",
+    "inputs": {
+      "clip": [
+        "text_device",
+        0
+      ]
+    }
+  },
+  "video_vae": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    }
+  },
+  "audio_vae": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    }
+  },
+  "source": {
+    "class_type": "LoadVideo",
+    "inputs": {
+      "file": "input.mp4"
+    }
+  },
+  "prepare": {
+    "class_type": "H3RelayPrepareSource",
+    "inputs": {
+      "video": [
+        "source",
+        0
+      ],
+      "resolution": "768",
+      "duration_seconds": 0.0,
+      "missing_audio": "silence"
+    }
+  },
+  "dimensions": {
+    "class_type": "GetImageSize",
+    "inputs": {
+      "image": [
+        "prepare",
+        0
+      ]
+    }
+  },
+  "picture_0": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "picture_1.png"
+    }
+  },
+  "picture_1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "picture_2.png"
+    }
+  },
+  "picture_2": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "picture_3.png"
+    }
+  },
+  "mask_file": {
+    "class_type": "LoadVideo",
+    "inputs": {
+      "file": "masks.mp4"
+    }
+  },
+  "mask_frames": {
+    "class_type": "GetVideoComponents",
+    "inputs": {
+      "video": [
+        "mask_file",
+        0
+      ]
+    }
+  },
+  "mask_fitted": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "mask_frames",
+        0
+      ],
+      "upscale_method": "nearest-exact",
+      "width": [
+        "dimensions",
+        0
+      ],
+      "height": [
+        "dimensions",
+        1
+      ],
+      "crop": "center"
+    }
+  },
+  "mask": {
+    "class_type": "ImageToMask",
+    "inputs": {
+      "image": [
+        "mask_fitted",
+        0
+      ],
+      "channel": "red"
+    }
+  },
+  "expand_mask": {
+    "class_type": "H3RelayExpandMask",
+    "inputs": {
+      "masks": [
+        "mask",
+        0
+      ],
+      "images": [
+        "prepare",
+        0
+      ],
+      "source_frames": [
+        "prepare",
+        5
+      ],
+      "expansion_px": 64
+    }
+  },
+  "plan": {
+    "class_type": "H3RelayWindowPlan",
+    "inputs": {
+      "source_frames": [
+        "prepare",
+        5
+      ],
+      "window_frames": "124",
+      "history_frames": "18",
+      "seed": 1,
+      "schedule": "adaptive",
+      "seed_mode": "fixed",
+      "seed_overrides": "{}"
+    }
+  },
+  "start": {
+    "class_type": "StartLoop",
+    "inputs": {
+      "mode": "simple",
+      "cache_iterations": false,
+      "mode.num_iterations": [
+        "plan",
+        2
+      ]
+    }
+  },
+  "window": {
+    "class_type": "H3RelayWindowInputs",
+    "inputs": {
+      "source": [
+        "prepare",
+        0
+      ],
+      "window": [
+        "plan",
+        3
+      ],
+      "iteration_index": [
+        "start",
+        0
+      ],
+      "previous": [
+        "start",
+        4
+      ],
+      "reference_history": true,
+      "fps": 24.0,
+      "resize_anchor": true,
+      "history_audio_mode": "source",
+      "source_audio": [
+        "prepare",
+        1
+      ],
+      "mask": [
+        "expand_mask",
+        0
+      ]
+    }
+  },
+  "conditioning": {
+    "class_type": "MiniMaxH3ReferenceToVideo",
+    "inputs": {
+      "clip": [
+        "text_memory",
+        0
+      ],
+      "prompt": "Replace the selected person in <Video 1> with the person in <Picture 1>. <Picture 2> is a close-up of the same person's face. <Picture 3> shows them from behind. Keep the reference person's face, hair and clothing. Follow the source performance's pose, gaze, expression and movement. Preserve the scene and the other people.",
+      "width": [
+        "dimensions",
+        0
+      ],
+      "height": [
+        "dimensions",
+        1
+      ],
+      "length": [
+        "window",
+        8
+      ],
+      "ref_image_size": "match",
+      "vae": [
+        "video_vae",
+        0
+      ],
+      "audio_vae": [
+        "audio_vae",
+        0
+      ],
+      "ref_images.ref_image_0": [
+        "picture_0",
+        0
+      ],
+      "ref_images.ref_image_1": [
+        "picture_1",
+        0
+      ],
+      "ref_images.ref_image_2": [
+        "picture_2",
+        0
+      ],
+      "ref_videos.ref_video_0": [
+        "window",
+        5
+      ],
+      "ref_audios.ref_audio_0": [
+        "window",
+        6
+      ]
+    }
+  },
+  "history": {
+    "class_type": "H3RelayApplyHistory",
+    "inputs": {
+      "positive": [
+        "conditioning",
+        0
+      ],
+      "latent": [
+        "conditioning",
+        1
+      ],
+      "vae": [
+        "video_vae",
+        0
+      ],
+      "audio_vae": [
+        "audio_vae",
+        0
+      ],
+      "frames": [
+        "window",
+        3
+      ],
+      "history_frames": [
+        "window",
+        7
+      ],
+      "first_frame_guide": false,
+      "target_audio_guide": false,
+      "audio": [
+        "window",
+        4
+      ]
+    }
+  },
+  "encode_source": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "window",
+        0
+      ],
+      "vae": [
+        "video_vae",
+        0
+      ]
+    }
+  },
+  "edit_mask": {
+    "class_type": "H3RelayApplyEditMask",
+    "inputs": {
+      "latent": [
+        "history",
+        1
+      ],
+      "source_latent": [
+        "encode_source",
+        0
+      ],
+      "mask": [
+        "window",
+        1
+      ]
+    }
+  },
+  "guide": {
+    "class_type": "MiniMaxH3AddGuide",
+    "inputs": {
+      "positive": [
+        "history",
+        0
+      ],
+      "latent": [
+        "edit_mask",
+        0
+      ],
+      "frame_idx": 0,
+      "audio_vae": [
+        "audio_vae",
+        0
+      ],
+      "audio": [
+        "window",
+        2
+      ]
+    }
+  },
+  "sampling_memory": {
+    "class_type": "H3RelaySamplingMemory",
+    "inputs": {
+      "model": [
+        "swap_lora",
+        0
+      ],
+      "latent": [
+        "edit_mask",
+        0
+      ],
+      "conditioning": [
+        "guide",
+        0
+      ],
+      "activation_memory_gib": 17.0
+    }
+  },
+  "noise": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": [
+        "window",
+        10
+      ]
+    }
+  },
+  "guider": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "model": [
+        "sampling_memory",
+        0
+      ],
+      "positive": [
+        "guide",
+        0
+      ],
+      "negative": [
+        "guide",
+        0
+      ],
+      "cfg": 1.0
+    }
+  },
+  "sampler": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "er_sde"
+    }
+  },
+  "schedule": {
+    "class_type": "BasicScheduler",
+    "inputs": {
+      "model": [
+        "swap_lora",
+        0
+      ],
+      "scheduler": "normal",
+      "steps": 8,
+      "denoise": 1.0
+    }
+  },
+  "sample": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "noise",
+        0
+      ],
+      "guider": [
+        "guider",
+        0
+      ],
+      "sampler": [
+        "sampler",
+        0
+      ],
+      "sigmas": [
+        "schedule",
+        0
+      ],
+      "latent_image": [
+        "edit_mask",
+        0
+      ]
+    }
+  },
+  "separate": {
+    "class_type": "LTXVSeparateAVLatent",
+    "inputs": {
+      "av_latent": [
+        "sample",
+        0
+      ]
+    }
+  },
+  "decode": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "separate",
+        0
+      ],
+      "vae": [
+        "video_vae",
+        0
+      ]
+    }
+  },
+  "append": {
+    "class_type": "H3RelayAppendWindow",
+    "inputs": {
+      "frames": [
+        "decode",
+        0
+      ],
+      "window": [
+        "window",
+        12
+      ],
+      "previous": [
+        "start",
+        4
+      ]
+    }
+  },
+  "end": {
+    "class_type": "EndLoop",
+    "inputs": {
+      "output_value": [
+        "append",
+        0
+      ],
+      "next_iteration_value": [
+        "append",
+        0
+      ],
+      "accumulate": false
+    }
+  },
+  "finish": {
+    "class_type": "H3RelayFinishWindows",
+    "inputs": {
+      "state": [
+        "end",
+        0
+      ],
+      "audio_mode": "source",
+      "source_audio": [
+        "prepare",
+        1
+      ]
+    }
+  },
+  "video": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "finish",
+        0
+      ],
+      "fps": [
+        "finish",
+        2
+      ],
+      "audio": [
+        "finish",
+        1
+      ]
+    }
+  },
+  "save": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "video",
+        0
+      ],
+      "filename_prefix": "rigless/swap",
+      "format": "mp4",
+      "format.codec": "h264",
+      "format.codec.encoding": "re-encode",
+      "format.codec.encoding.crf": 16
+    }
+  }
+}

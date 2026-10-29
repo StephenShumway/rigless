@@ -8,8 +8,9 @@
 
 Rigless is an open-source app that redraws one or more people in real footage as the
 character in your pictures. You click the person; everything else (the scene, the
-camera, the light, everyone else in the shot) stays exactly as filmed. It runs on open
-weights only, with [MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3) as the core
+camera, the light, everyone else in the shot) comes from your footage, not from a
+prompt. It runs on open weights only, with
+[MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3) as the core
 model, through the [Comfy SDK](https://pypi.org/project/comfy-sdk/), on a GPU you choose.
 
 Built for Comfy's [#OpenSourceHiggsfield](https://comfy.org/open-source-higgsfield)
@@ -17,9 +18,9 @@ challenge, as an open answer to Higgsfield's Genjutsu.
 
 ## What makes it different
 
-- **The scene stays pixel-exact.** H3 redraws only inside the tracked person's mask, and
-  the take is pasted back onto your full-size footage. Outside the person you see the
-  frames you filmed, at their own resolution, not a re-drawn copy.
+- **The scene stays as filmed.** H3 redraws only inside the tracked person's mask and
+  keeps your clip's own latents everywhere else, so the scene and everyone else come back
+  from your footage, at H3's resolution (about 1 megapixel at Full).
 - **Its own LoRA, trained on real footage.** The Rigless LoRA fine-tunes H3 Relay's
   Character Swap LoRA so it reads your character's pictures closely and matches the
   footage's light. See [The Rigless LoRA](#the-rigless-lora).
@@ -42,8 +43,10 @@ challenge, as an open answer to Higgsfield's Genjutsu.
    that frame on. To pick someone else, tap them on the same frame, or **Clear taps** on
    the person's card. **+ Add person** swaps more than one.
 3. **Add the character:** a character sheet, or a few pictures: a front view, a close-up
-   of the face and a back view work best. Small details such as a monocle or a ring need
-   the close-up; from one front photo they can come out wrong.
+   of the face and a back view work best. One of them must show the whole body, head to
+   toe. A sheet with several figures on a plain backdrop is cut into its views; a picture
+   of one person is used whole. Small details such as a monocle need the close-up; from
+   one front photo they can come out wrong.
 4. **Generate** a **Draft** (480p, about 2.5x faster, for checking casting and motion) or a
    **Full** take (768p). Takes add up; compare them, and download the best.
 
@@ -53,8 +56,8 @@ The first render asks you to agree to MiniMax H3's terms (see
 ## Install
 
 You need [uv](https://docs.astral.sh/uv/) and git. The app runs on Windows, macOS or Linux;
-the rendering runs on a GPU with **48 GB or more** (tested on an A40 48 GB and an H100
-80 GB) and a driver for **CUDA 13**.
+the rendering runs on a GPU with **48 GB or more** (tested on an H100 80 GB) and a driver
+for **CUDA 13**.
 
 ```bash
 git clone https://github.com/StephenShumway/rigless
@@ -71,19 +74,23 @@ computer. Then choose where it renders with the button at the top right:
 1. Make a [RunPod](https://www.runpod.io/) account, add credit, and create an API key.
 2. In the app, choose **RunPod**, paste the key (it stays in your browser), pick a GPU, and
    press **Deploy**. Rigless rents a GPU in your account and sets it up: ComfyUI, the models
-   (about 67 GB) and a token-protected connection. The first setup takes about 15 minutes, and the app shows its progress.
-3. **Pause** when you're done: RunPod stops billing the GPU and keeps the disk (about $0.03
-   an hour for its 100 GB), and **Resume** brings it back in a few minutes. **Delete** removes
-   both.
+   (about 67 GB) and a token-protected connection. The first setup takes about 5
+   minutes on a fast data center and longer on a slow one (RunPod picks it), and the app
+   shows its progress and the time left.
+3. **Pause** when you're done: RunPod stops billing the GPU and keeps the pod's 100 GB disk
+   with ComfyUI and the models (about $0.03 an hour). **Resume** brings it back if its
+   machine's GPU is free. It keeps the models but reinstalls the Python environments,
+   which live on the container disk that a pause clears. **Delete** removes both.
 
 ### This Computer
 
 For an NVIDIA GPU with 48 GB or more in your own machine:
 
-1. Install [ComfyUI](https://github.com/Comfy-Org/ComfyUI) **v0.41.2** and the
+1. Install [ComfyUI](https://github.com/Comfy-Org/ComfyUI) **v0.41.2** with PyTorch for
+   CUDA 13 (`cu130`), add `scipy` to its environment, and put the
    [H3 Relay](https://github.com/akatz-ai/h3-relay) nodes in its `custom_nodes` (the commit
    Rigless was tested with is pinned in `deploy/runpod/setup.sh`).
-2. Download the models into ComfyUI's models folder:
+2. Download the models (about 67 GB) into ComfyUI's models folder:
    `uv run python scripts/download_models.py --models-dir /path/to/ComfyUI/models`
 3. Start ComfyUI, then the proxy that Rigless talks to:
    `uv run comfy-api-proxy start --comfyui http://127.0.0.1:8188` (it listens on
@@ -95,11 +102,12 @@ For an NVIDIA GPU with 48 GB or more in your own machine:
 ### Custom (any other GPU server)
 
 On any Linux machine with a suitable GPU (another cloud, a lab server), clone this repo and
-run `PROXY_TOKEN=<a long random value> bash deploy/runpod/setup.sh`. It installs everything
-under `/workspace` and starts the proxy on port 8189, protected by that token. The proxy
-itself speaks plain HTTP, so put it behind HTTPS (a reverse proxy such as Caddy, or a
-tunnel) before it leaves a private network: the token goes with every request. Then copy
-`.env.example` to `.env` in your local copy of Rigless and fill in two lines:
+run `PROXY_TOKEN=<a long random value> bash deploy/runpod/setup.sh` as root. It puts
+ComfyUI and the models under `/workspace` and the Python environments under `/opt`, and
+starts the proxy on port 8189, protected by that token. The proxy itself speaks plain
+HTTP, so put it behind HTTPS (a reverse proxy such as Caddy, or a tunnel) before it leaves
+a private network: the token goes with every request. Then copy `.env.example` to `.env`
+in your local copy of Rigless and fill in two lines:
 
 ```bash
 COMFY_BASE_URL=https://your-server     # the HTTPS address in front of the proxy
@@ -125,15 +133,19 @@ lines to choose RunPod or This Computer again.
 4. **Swapping.** MiniMax H3 redraws each person inside their mask, grown by a margin for
    hair and clothes, in overlapping windows, with the clip as `<Video 1>` and the pictures
    as `<Picture 1>` to `<Picture N>`. Outside the masks H3 keeps the clip's own latents.
-   It runs with an 8-step Turbo LoRA and the Rigless LoRA, and hears the clip silent, so it
-   follows the performer's mouth rather than the soundtrack.
-5. **Pasting.** The take is pasted onto the full-size footage (up to 1920 px) through a
-   soft-edged mask, and gets the clip's own sound back. Its metadata says it's
+   It runs with an 8-step Turbo LoRA and the Rigless LoRA, and hears the clip's sound, so
+   mouths move with the song or speech.
+5. **Finishing.** The take gets the clip's own sound back, and its metadata says it's
    AI-generated.
 6. **Scoring.** RTMPose finds the performer's pose in the clip and the character's pose in
    the take, inside the same boxes, and compares limb directions frame by frame. A take
    that barely moves is flagged frozen, one that moves like a mirror image is flagged
    mirrored. The best take is the best unflagged one, Full before Draft.
+
+The ComfyUI workflows Rigless runs (the H3 swap, SAM 3.1 tapping and tracking, and the
+Qwen3-VL describer) are in [`workflows/`](workflows/) as API-format JSON. Drag one into
+ComfyUI and point its placeholder inputs (`input.mp4`, `masks.mp4`, `picture_1.png`, …)
+at your own files; `scripts/export_workflows.py` regenerates them from the code.
 
 ## Models and tools
 
@@ -147,10 +159,10 @@ lines to choose RunPod or This Computer again.
 | [H3 Relay](https://github.com/akatz-ai/h3-relay) nodes by akatz | Masked, windowed H3 rendering | GPL-3.0, installed separately in ComfyUI |
 | [SAM 3.1](https://huggingface.co/Comfy-Org/sam3.1) | Tracking the people you click | [SAM License](https://huggingface.co/Comfy-Org/sam3.1/blob/main/LICENSE) |
 | Qwen3-VL 8B ([Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1), `text_encoders`) | The description, the "has no" list, the safety check | [Qwen Research License](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE): research and evaluation only |
-| [rtmlib](https://github.com/Tau-J/rtmlib) with RTMPose and YOLOX | Poses for scoring and the tracking checks, views on sheets | Apache-2.0; the weights come from OpenMMLab <!-- TODO: confirm the RTMPose/YOLOX weights' license --> |
+| [rtmlib](https://github.com/Tau-J/rtmlib) with RTMPose and YOLOX | Poses for scoring and the tracking checks, views on sheets | Apache-2.0; the weights come from OpenMMLab's [MMPose](https://github.com/open-mmlab/mmpose) (Apache-2.0), trained on public datasets with their own terms |
 | [ComfyUI](https://github.com/Comfy-Org/ComfyUI) | Running the models | GPL-3.0, a separate program |
 | [Comfy SDK](https://github.com/Comfy-Org/comfy-python-sdk), [comfy-api-proxy](https://github.com/Comfy-Org/comfy-api-proxy) | Talking to ComfyUI | MIT |
-| [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg) | Video in and out (it bundles an FFmpeg build) | BSD-2-Clause |
+| [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg) | Video in and out (it bundles an FFmpeg build) | BSD-2-Clause; the FFmpeg build it bundles is under the GPL, run as a separate program |
 | [IBM Plex](https://github.com/IBM/plex) Sans and Mono | The app's fonts, bundled | SIL Open Font License 1.1 (`src/rigless/web/fonts/OFL.txt`) |
 
 The Qwen3-VL 8B file is under Qwen's research license, unlike the Apache-2.0 Qwen3-VL
@@ -166,7 +178,6 @@ It fine-tunes akatz's H3 Relay Character Swap LoRA v1.5 on real footage. Each tr
 sample is a real clip with someone else swapped in by H3; the LoRA learns to turn that
 back into the real person, given only a picture of them. The target is always real
 footage, so it learns real light and has to read the picture to know who to draw.
-<!-- TODO: the clip count and sources (46 clips: 30 Pexels + 16 others?) and the Pexels credit. -->
 
 In a blind test it was preferred over v1.5 and over no swap LoRA (3 clips, one take each,
 judged by its developer). It is not measurably better at face identity.
@@ -181,11 +192,19 @@ name.
 ## Limitations
 
 - One take covers up to 20 seconds of footage, and replaces up to three people.
-- The GPU needs 48 GB or more; smaller cards are untested.
+- Takes come out at H3's resolution, about 1 megapixel at Full (for example 1248x800 for
+  a landscape clip).
+- H3 takes up to nine pictures in all; with several people, they're dealt out one each in
+  turn.
+- The GPU needs 48 GB or more; only the H100 (80 GB) has been tested.
 - Small accessories need a close-up of the face; from a single front photo they can come
   out wrong (a monocle drawn as glasses).
 - After a camera cut, SAM can lose the person or follow someone else; check the preview and
   tap again.
+- Someone who faces away from the camera the whole clip can be turned toward it partway
+  through, especially when they're small in a crowd. A note such as "@1 walks away from
+  the camera and is seen from behind" keeps their back, and the motion score drops on a
+  take that turned, so a second take helps too.
 
 ## Responsible use
 
@@ -199,7 +218,7 @@ model. MiniMax H3 can't be used in the United States, the European Union, the Un
 Kingdom or South Korea without your own
 [authorization from MiniMax](https://platform.minimax.io/h3-license).
 
-Report misuse: <!-- TODO: the report email (terms.REPORT_EMAIL) -->
+Report misuse: [pickax-diamond0s@icloud.com](mailto:pickax-diamond0s@icloud.com)
 
 ## For developers
 
@@ -228,7 +247,7 @@ Settings, all optional, go in `.env` at the repo root (see `.env.example`):
 | `selection.py` | Tracking the clicked people with SAM 3.1 |
 | `sheet.py` | Finding the views on a character sheet |
 | `describe.py` | Qwen3-VL: the description, the "has no" list, the safety check |
-| `swap.py` | The H3 swap graph, rendering, pasting |
+| `swap.py` | The H3 swap graph, rendering |
 | `pose.py`, `score.py` | Pose estimation and the motion score |
 | `video_prep.py` | ffmpeg and OpenCV helpers |
 | `comfy_client.py`, `config.py` | The connection to ComfyUI |

@@ -37,6 +37,7 @@ const state = {
   pendingSheet: null, // character images picked before the project exists
   sendingSheet: null, // character images on their way to the server, or being looked at there
   sheetPerson: 0, // whose character sendingSheet is
+  sheetQueue: [], // { person, file } for each image picked during an upload, sent after it
   recent: [], // characters used before, for the Recent row
   uploading: false,
   trim: null, // [start, end] seconds on the trim bar
@@ -334,7 +335,7 @@ function resetSet() {
   if (state.local) URL.revokeObjectURL(state.local.url);
   Object.assign(state, {
     project: null, local: null, person: 0, pendingSheet: null, sendingSheet: null, sheetPerson: 0,
-    uploading: false, trim: null,
+    sheetQueue: [], uploading: false, trim: null,
     trimDirty: false, descriptionDirty: false, duration: 0, tapBusy: false, localActivity: null,
     pendingTap: null, sheetProgress: null, viewing: null, lastStatus: null, lastStep: null,
   });
@@ -438,8 +439,12 @@ function applyProject(project) {
   if (busy(project)) state.localActivity = null; // the server's step has taken over
   else syncEdits();
   if (state.pendingSheet && !state.uploading) sendCharacter(state.pendingSheet, false);
-  if (state.sendingSheet && !state.uploading && (pictures(project, state.sheetPerson).length || !busy(project))) {
+  // Pictures that came with the footage are in once the server has found their
+  // views; ones uploaded on their own (they have a progress) when their upload answers.
+  if (state.sendingSheet && state.sheetProgress == null && !state.uploading
+    && (pictures(project, state.sheetPerson).length || !busy(project))) {
     state.sendingSheet = null;
+    sendQueued();
   }
   renderMonitor();
   renderTrim();
@@ -1095,7 +1100,12 @@ function allot(counts) {
 
 // Each card's pictures: the server's, then any still on their way there.
 function cardFiles(index) {
-  return index === state.sheetPerson ? state.sendingSheet || state.pendingSheet || [] : [];
+  const sending = index === state.sheetPerson ? state.sendingSheet || state.pendingSheet || [] : [];
+  return [...sending, ...queuedFiles(index)];
+}
+
+function queuedFiles(person) {
+  return state.sheetQueue.filter((item) => item.person === person).map((item) => item.file);
 }
 
 function selectPerson(index) {
@@ -1106,35 +1116,38 @@ function selectPerson(index) {
 }
 
 // New images join the selected person's character; a recent character replaces it.
+// Images picked during an upload wait for it, since two at once would race on the server.
 function chooseCharacter(files, { replace = false } = {}) {
   if (!files.length) return;
-  // A drop or paste can arrive mid-upload, and two uploads would race on the server.
-  if (state.project && state.sendingSheet) {
-    showError("Wait for the pictures being added, then add more.");
+  const waiting = Boolean(state.project && state.sendingSheet);
+  if (waiting && replace) {
+    showError("Wait for the pictures being added, then pick the character.");
     return;
   }
-  if (!replace && pictures().length >= MAX_PICTURES) {
+  if (!replace && pictures().length + cardFiles(state.person).length >= MAX_PICTURES) {
     showError(`A character has up to ${MAX_PICTURES} pictures. Remove one to add another.`);
     return;
   }
-  if (state.project) sendCharacter(files, !replace && pictures().length > 0);
+  showError("");
+  if (waiting) state.sheetQueue.push(...files.map((file) => ({ person: state.person, file })));
+  else if (state.project) sendCharacter(files, !replace && pictures().length > 0);
   else state.pendingSheet = replace ? files : [...(state.pendingSheet || []), ...files];
   renderCharacter();
   renderChecklist();
 }
 
-async function sendCharacter(files, append) {
+// Leaves the page's error up, so a failed upload's stays while the images queued behind it go.
+async function sendCharacter(files, append, person = state.person) {
   state.pendingSheet = null;
   state.sendingSheet = files;
-  state.sheetPerson = state.person;
+  state.sheetPerson = person;
   state.sheetProgress = 0;
   renderCharacter();
   renderChecklist();
   const data = new FormData();
   for (const file of files) data.append("sheet", file);
   data.append("append", String(append));
-  data.append("person", String(state.sheetPerson));
-  showError("");
+  data.append("person", String(person));
   try {
     applyProject(await upload(projectPath("/character"), data, (fraction) => {
       state.sheetProgress = fraction;
@@ -1149,6 +1162,16 @@ async function sendCharacter(files, append) {
     renderCharacter();
     renderChecklist();
   }
+  sendQueued();
+}
+
+// Each person's queued images go up together, one person at a time.
+function sendQueued() {
+  if (!state.sheetQueue.length) return;
+  const { person } = state.sheetQueue[0];
+  const files = queuedFiles(person);
+  state.sheetQueue = state.sheetQueue.filter((item) => item.person !== person);
+  sendCharacter(files, true, person);
 }
 
 async function removePicture(index, id) {
@@ -1295,7 +1318,8 @@ function renderPerson(card, index, several, used) {
   $(".card-title", card).textContent = several ? `Person ${index + 1}` : "Character";
   const remove = $(".person-remove", card);
   remove.hidden = !several;
-  remove.disabled = busy(project);
+  // Pictures being added or queued name their person by place, which a removal would shift.
+  remove.disabled = busy(project) || Boolean(state.sendingSheet);
   const taps = people(project)[index]?.anchors ?? [];
   $(".taps", card).hidden = taps.length === 0;
   $(".taps-label", card).textContent = taps.length === 1
@@ -1307,16 +1331,21 @@ function renderPerson(card, index, several, used) {
       key: picture.id, src: fileUrl(project.id, picture.file), label: ROLES[picture.role] || "View",
       first: position === 0, unused: position >= used, onRemove: () => removePicture(index, picture.id),
     })),
-    ...theirs.map((file) => pictureTile({
-      key: file.name + file.size, src: localUrl(file), label: state.sendingSheet ? "Adding" : "New",
-      busy: Boolean(state.sendingSheet),
-      onRemove: state.sendingSheet ? null : () => {
-        state.pendingSheet = state.pendingSheet.filter((item) => item !== file);
-        if (!state.pendingSheet.length) state.pendingSheet = null;
-        renderCharacter();
-        renderChecklist();
-      },
-    })),
+    ...theirs.map((file) => {
+      const adding = Boolean(state.sendingSheet?.includes(file));
+      const label = adding ? "Adding" : "New";
+      return pictureTile({
+        key: file.name + file.size + label, // redrawn when a queued one starts uploading
+        src: localUrl(file), label, busy: adding,
+        onRemove: adding ? null : () => {
+          state.sheetQueue = state.sheetQueue.filter((item) => item.file !== file);
+          const pending = (state.pendingSheet || []).filter((item) => item !== file);
+          state.pendingSheet = pending.length ? pending : null;
+          renderCharacter();
+          renderChecklist();
+        },
+      });
+    }),
   ];
   const grid = $(".pictures", card);
   $(".slot", card).hidden = tiles.length > 0;

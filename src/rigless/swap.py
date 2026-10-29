@@ -7,7 +7,8 @@ latents, so the scene and the other people stay as filmed. The graph is built
 from ComfyUI's MiniMax H3 nodes and the H3 Relay node pack (GPL-3.0, installed
 separately in ComfyUI's custom_nodes), with the Rigless LoRA.
 
-H3 hears the clip silent, so it doesn't lip-sync to the soundtrack; each take
+H3 hears the clip's sound, so mouths move with the song or speech; a man in the
+same shot who wasn't singing stayed quiet in all four Oct 28 tests. Each take
 gets the clip's own sound back afterward.
 
 Typical usage example:
@@ -27,7 +28,6 @@ from functools import partial, reduce
 from pathlib import Path
 from typing import Any
 
-import cv2
 import numpy as np
 from comfy_sdk import Asset, Progress
 
@@ -47,7 +47,7 @@ SAMPLER = "sample"  # the node whose steps take most of a take's time
 RESOLUTIONS = ("480", "768")  # H3 Relay's budgets: about 0.5 and 1 megapixels
 # How far the mask grows, in H3's pixels at 768p, to leave room for hair and
 # clothes: the Rigless LoRA trained at this margin (40 px at 480p), as did
-# H3 Relay's v1.5. It and the paste's margins scale with the resolution.
+# H3 Relay's v1.5. It scales with the resolution.
 EXPAND = 64
 WINDOW_FRAMES = 124
 HISTORY_FRAMES = 18  # frames each window carries over from the one before
@@ -57,11 +57,10 @@ MAX_PICTURES = 9
 # the clip goes in led by its own first frames played backward, and those are
 # cut from the take; with 8, the turn happened inside them (Oct 27).
 LEAD_IN = 8
-# H3 Relay redraws whole 32-pixel cells around the mask, unioned over 4-frame
-# spans, so the paste reaches that far past the mask, in H3's pixels and frames.
-PASTE_PAD = 32
-PASTE_SPAN = 3
-FEATHER = 8.0  # the soft edge where H3's take meets the footage, in H3's pixels
+# It does the same on the last frame: a school take that ends from behind faced the
+# camera on its final frame (Oct 28). So the clip is also followed by its last
+# frames played backward, cut likewise: one of H3's 4-frame latent groups.
+LEAD_OUT = 4
 # Every take says it's AI-made, in its metadata, as H3's license encourages.
 AI_LABEL = "AI-generated: the person was redrawn by MiniMax H3, with Rigless."
 
@@ -250,76 +249,6 @@ def fill_gaps(masks: np.ndarray) -> np.ndarray:
     return masks[nearest]
 
 
-def paste(
-    take: Path,
-    footage: Path,
-    masks: np.ndarray,
-    dest: Path,
-    pad: int,
-    feather: float,
-) -> None:
-    """Writes the footage with only what H3 redrew taken from its take.
-
-    H3 renders the whole frame at about a megapixel. Pasting back only the
-    region it redrew keeps everything else as the footage's own pixels, at the
-    footage's full size.
-
-    Args:
-        take: H3's render.
-        footage: The same frames at full size.
-        masks: (frames, height, width) bools in the footage's shape, at any
-            size: the people H3 was told to redraw.
-        dest: Where the result goes, silent.
-        pad: How far past the masks H3 may have drawn, in its own pixels: the
-            margin they were grown by, plus H3 Relay's cells.
-        feather: The soft edge where the take meets the footage, in H3's pixels.
-    """
-    size = video_prep.probe(footage)
-    canvas = video_prep.probe(take)
-    scale = max(canvas.width / size.width, canvas.height / size.height)
-    # The take shows the footage's middle: H3 Relay scaled it to cover its
-    # canvas and cropped the rest.
-    width, height = round(canvas.width / scale), round(canvas.height / scale)
-    left, top = (size.width - width) // 2, (size.height - height) // 2
-
-    def pasted() -> Iterator[np.ndarray]:
-        frames = zip(
-            video_prep.iter_frames(take), video_prep.iter_frames(footage), strict=True
-        )
-        for index, (redrawn, frame) in enumerate(frames):
-            near = masks[max(index - PASTE_SPAN, 0) : index + PASTE_SPAN + 1]
-            region = _cover(
-                near.any(axis=0).astype(np.float32), canvas.width, canvas.height
-            )
-            # Everything within pad of the region: a round dilation, ~100x faster
-            # than cv2.dilate with a kernel this size (0.9 s a frame at 768p).
-            outside = (region <= 0.5).astype(np.uint8)
-            distance = cv2.distanceTransform(
-                outside, cv2.DIST_L2, cv2.DIST_MASK_PRECISE
-            )
-            region = (distance <= pad).astype(np.float32)
-            alpha = cv2.GaussianBlur(region, (0, 0), feather)
-            alpha = cv2.resize(alpha, (width, height))[..., None]
-            person = cv2.resize(
-                redrawn, (width, height), interpolation=cv2.INTER_LANCZOS4
-            )
-            middle = frame[top : top + height, left : left + width]
-            middle[:] = (middle * (1 - alpha) + person * alpha).round().clip(0, 255)
-            yield frame
-
-    video_prep.write_frames(pasted(), FPS, (size.width, size.height), dest)
-
-
-def _cover(image: np.ndarray, width: int, height: int) -> np.ndarray:
-    """Scales an image to cover width x height and crops the middle, like H3 Relay."""
-    scale = max(width / image.shape[1], height / image.shape[0])
-    scaled = cv2.resize(
-        image, (round(image.shape[1] * scale), round(image.shape[0] * scale))
-    )
-    top, left = (scaled.shape[0] - height) // 2, (scaled.shape[1] - width) // 2
-    return scaled[top : top + height, left : left + width]
-
-
 def swap_graph(
     source: str | Asset,
     masks: str | Asset,
@@ -332,7 +261,7 @@ def swap_graph(
     """Returns the workflow that swaps the masked person for the character.
 
     Args:
-        source: The clip, silent, at 24 fps.
+        source: The clip at 24 fps, with its sound if it has any.
         masks: The person's masks as a video, white on black, one frame per
             frame of the clip, at any size with the clip's shape.
         pictures: The character's pictures, <Picture 1> first.
@@ -566,18 +495,17 @@ def render_takes(
     seeds: Sequence[int],
     out_dir: Path,
     sound: tuple[Path, float] | None = None,
-    full: Path | None = None,
     resolution: str = "768",
     on_progress: Callable[[int, Progress], None] | None = None,
 ) -> Iterator[Take]:
     """Renders and scores one swap take per seed, yielding each when it's done.
 
-    Each take's folder holds h3.mp4 (H3's render, with the lead-in), result.mp4
-    (the same frames as part, scored), finished.mp4
-    (pasted onto the full-size part if given, with the clip's sound: the one
-    to show), and run.json. A take that fails, in ComfyUI or while it's being
-    finished, is yielded with its error, and the next seed goes on. With
-    several people, a take scores as well as its least faithful person.
+    Each take's folder holds h3.mp4 (H3's render, with the lead-in and
+    lead-out), result.mp4 (the same frames as part, scored), finished.mp4
+    (result.mp4 with the clip's sound: the one to show), and run.json. A take
+    that fails, in ComfyUI or while it's being finished, is yielded with its
+    error, and the next seed goes on. With several people, a take scores as well
+    as its least faithful person.
 
     Args:
         part: The clip to swap in, silent, at 24 fps.
@@ -587,9 +515,8 @@ def render_takes(
         seeds: The seeds to render, one take each, in order.
         out_dir: Where the take folders go.
         sound: The clip part came from and where part starts in it, in
-            seconds, for each take's soundtrack; None leaves takes silent.
-        full: The same frames as part at full size, to paste each take onto;
-            None shows H3's render as it is.
+            seconds: H3 hears it and each take gets it back as its soundtrack.
+            None renders and leaves takes silent.
         resolution: One of RESOLUTIONS.
         on_progress: Called with the take's index in seeds and each progress
             update while it renders.
@@ -609,11 +536,17 @@ def render_takes(
     dancers = [pose.estimate_in(part, person_boxes) for person_boxes in boxes]
     frames = len(found)
     lead = min(LEAD_IN, frames - 1)
-    led = video_prep.lead_in_order(frames, lead)  # the masks in part.mp4's order
+    tail = min(LEAD_OUT, frames - 1)
+    led = video_prep.padded_order(frames, lead, tail)  # the masks in part.mp4's order
     video_prep.write_video(
         found[led].astype(np.uint8) * 255, FPS, out_dir / "masks.mp4"
     )
-    video_prep.lead_in(part, lead, FPS, out_dir / "part.mp4")
+    padded = out_dir / "padded.mp4"
+    video_prep.pad(part, lead, tail, FPS, padded)
+    if sound:  # in time with the clip, after the lead-in
+        video_prep.add_audio(padded, *sound, out_dir / "part.mp4", delay=lead / FPS)
+    else:
+        padded.replace(out_dir / "part.mp4")
     with comfy_client.connect() as client:
         part_asset = client.assets.from_file(out_dir / "part.mp4")
         masks_asset = client.assets.from_file(out_dir / "masks.mp4")
@@ -645,16 +578,10 @@ def render_takes(
                     take_score = _score(
                         result, dancers, boxes, (found.shape[2], found.shape[1])
                     )
-                    shown = result
-                    if full:
-                        shown = take_dir / "pasted.mp4"
-                        scale = _scale(resolution)
-                        pad = round((PASTE_PAD + EXPAND) * scale)
-                        paste(result, full, found, shown, pad, FEATHER * scale)
                     # Without a soundtrack, the take's own (silent) one goes back on.
                     source, start = sound or (result, 0.0)
                     video_prep.add_audio(
-                        shown,
+                        result,
                         source,
                         start,
                         take_dir / "finished.mp4",

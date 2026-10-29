@@ -19,7 +19,7 @@ from pathlib import Path
 VERSION = "2026-10-27"
 LICENSE_URL = "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE"
 AUTHORIZATION_URL = "https://platform.minimax.io/h3-license"
-REPORT_EMAIL = ""  # where misuse is reported; must be set before release
+REPORT_EMAIL = "pickax-diamond0s@icloud.com"  # where misuse is reported
 NOTICE = (
     "Rigless redraws people with MiniMax H3, licensed under the MiniMax H3 "
     "Community License Agreement, Copyright © 2026 MiniMax. All Rights Reserved. "

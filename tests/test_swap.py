@@ -1,9 +1,7 @@
-from pathlib import Path
-
 import numpy as np
 import pytest
 
-from rigless import swap, video_prep
+from rigless import swap
 
 
 def _masks(found: list[bool]) -> np.ndarray:
@@ -107,26 +105,3 @@ def test_tags_in_the_notes_point_at_each_persons_first_picture() -> None:
         "the person in <Picture 3> hands the person in <Picture 1> the mic; @3 is "
         "nobody."
     )
-
-
-def test_paste_takes_only_the_redrawn_person_from_the_take(tmp_path: Path) -> None:
-    # A gray 256x192 footage and a white 128x128 take: H3 covers its canvas with
-    # the footage's middle 192x192, so 32 px on each side never reach the take.
-    footage, take, out = (
-        tmp_path / "footage.mp4",
-        tmp_path / "take.mp4",
-        tmp_path / "out.mp4",
-    )
-    video_prep.write_video(np.full((6, 192, 256, 3), 100, np.uint8), 24.0, footage)
-    video_prep.write_video(np.full((6, 128, 128, 3), 255, np.uint8), 24.0, take)
-    masks = np.zeros((6, 48, 64), bool)
-    masks[:, 22:26, 30:34] = True  # the person, in the middle, at a quarter size
-
-    swap.paste(take, footage, masks, out, swap.PASTE_PAD, swap.FEATHER)
-
-    frames = video_prep.read_frames(out).astype(int)
-    original = video_prep.read_frames(footage).astype(int)
-    assert frames.shape == original.shape
-    assert np.all(frames[:, 96, 128] > 245)
-    for y, x in ((5, 5), (96, 20), (180, 240)):  # a corner, the cropped band, far off
-        assert np.all(np.abs(frames[:, y, x] - original[:, y, x]) <= 3)

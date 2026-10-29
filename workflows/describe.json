@@ -1,0 +1,43 @@
+{
+  "vlm": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_8b_int8_convrot.safetensors",
+      "type": "stable_diffusion",
+      "device": "default"
+    }
+  },
+  "image": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "collage.png"
+    }
+  },
+  "ask_0": {
+    "class_type": "TextGenerate",
+    "inputs": {
+      "clip": [
+        "vlm",
+        0
+      ],
+      "prompt": "These pictures show one person from several views. Describe their appearance so a video model can redraw them exactly: face, hair, facial hair, eyewear, jewelry and other accessories, and the clothing from top to bottom including shoes. Name colors and materials. Study any close-up of the face for small details such as a monocle (a single lens over one eye, often on a chain), earrings or piercings, and state them precisely. Describe only how they look, never their pose, gestures, expression or what they're doing: the video decides those. Don't say left or right. One paragraph under 90 words, no preamble.",
+      "image": [
+        "image",
+        0
+      ],
+      "max_length": 256,
+      "sampling_mode": "off"
+    }
+  },
+  "save_0": {
+    "class_type": "SaveText",
+    "inputs": {
+      "text": [
+        "ask_0",
+        0
+      ],
+      "filename_prefix": "rigless/describe",
+      "format": "txt"
+    }
+  }
+}

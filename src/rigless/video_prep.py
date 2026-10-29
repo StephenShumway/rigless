@@ -11,6 +11,7 @@ Typical usage example:
           max_side=1280)
 """
 
+import collections
 import contextlib
 import itertools
 import math
@@ -152,7 +153,12 @@ def cut_frames(src: Path, dest: Path, start: int, stop: int) -> None:
 
 
 def add_audio(
-    video: Path, source: Path, start: float, dest: Path, comment: str = ""
+    video: Path,
+    source: Path,
+    start: float,
+    dest: Path,
+    comment: str = "",
+    delay: float = 0.0,
 ) -> None:
     """Writes video with source's sound from start seconds on.
 
@@ -165,13 +171,15 @@ def add_audio(
         start: Where in source the sound starts, in seconds.
         dest: Where the copy goes.
         comment: Text for the copy's comment metadata, if any.
+        delay: Seconds of silence in the copy before the sound comes in.
 
     Raises:
         RuntimeError: ffmpeg failed, e.g., because a file is not a video.
     """
+    delayed = ["-af", f"adelay={round(delay * 1000)}:all=1"] if delay else []
     _ffmpeg(
         "-v", "error", "-y", "-i", str(video), "-ss", str(start), "-i", str(source),
-        "-map", "0:v", "-map", "1:a?", "-t", str(probe(video).duration),
+        "-map", "0:v", "-map", "1:a?", *delayed, "-t", str(probe(video).duration),
         "-c:v", "copy", "-c:a", "aac", "-metadata", f"comment={comment}", str(dest),
     )  # fmt: skip
 
@@ -203,20 +211,26 @@ def reverse(src: Path, dest: Path) -> None:
     )  # fmt: skip
 
 
-def lead_in_order(length: int, frames: int) -> np.ndarray:
-    """Returns the frame indices lead_in plays for a clip of length frames."""
-    return np.r_[np.arange(frames, 0, -1), np.arange(length)]
+def padded_order(length: int, head: int, tail: int) -> np.ndarray:
+    """Returns the frame indices pad plays for a clip of length frames."""
+    return np.r_[
+        np.arange(head, 0, -1),
+        np.arange(length),
+        np.arange(length - 2, length - 2 - tail, -1),
+    ]
 
 
-def lead_in(clip: Path, frames: int, fps: float, dest: Path) -> None:
-    """Writes a clip led by its first frames played backward, without its audio.
+def pad(clip: Path, head: int, tail: int, fps: float, dest: Path) -> None:
+    """Writes a clip between its own ends played backward, without its audio.
 
-    The result starts on frame `frames`, plays back to frame 1, then plays the
-    whole clip, so the motion never jumps: the order of lead_in_order.
+    The result starts on frame `head`, plays back to frame 1, plays the whole
+    clip, then plays back from the second-to-last frame for `tail` frames, so
+    the motion never jumps: the order of padded_order.
 
     Args:
         clip: The video.
-        frames: How many frames lead in; at most the clip's length minus one.
+        head: How many frames lead in; at most the clip's length minus one.
+        tail: How many frames lead out; at most the clip's length minus one.
         fps: The clip's frame rate.
         dest: Where to write the .mp4.
 
@@ -227,10 +241,14 @@ def lead_in(clip: Path, frames: int, fps: float, dest: Path) -> None:
 
     def played() -> Iterator[np.ndarray]:
         source = iter_frames(clip)
-        opening = list(itertools.islice(source, frames + 1))
-        yield from opening[frames:0:-1]
+        opening = list(itertools.islice(source, head + 1))
+        yield from opening[head:0:-1]
+        ending = collections.deque(opening, maxlen=tail + 1)
         yield from opening
-        yield from source
+        for frame in source:
+            ending.append(frame)
+            yield frame
+        yield from list(ending)[-2::-1][:tail]
 
     write_frames(played(), fps, (info.width, info.height), dest)
 

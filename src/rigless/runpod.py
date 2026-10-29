@@ -284,8 +284,13 @@ def setup_estimate(progress: Mapping[str, Any], now: float) -> dict[str, float]:
         spent = done / speed
     else:
         spent = min(now - since, 0.9 * seconds[stage])  # a slow step isn't over yet
-    finished = sum(seconds[step] for step in steps[:current]) + spent
     left = seconds[stage] - spent + sum(seconds[step] for step in steps[current + 1 :])
+    if progress.get("started") is None:
+        finished = sum(seconds[step] for step in steps[:current]) + spent
+    else:
+        # The time really taken, as a fast pod beats the typical times by minutes
+        # (the pod's clock, which set started, can be a little ahead of ours).
+        finished = max(0.0, now - started)
     return {"fraction": finished / (finished + left), "seconds_left": left}
 
 

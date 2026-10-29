@@ -2,9 +2,9 @@
 # Sets up a RunPod pod for Rigless and starts it: ComfyUI with the H3 Relay nodes, the
 # MiniMax H3 character-swap models, the app's environment, and comfy-api-proxy.
 # ComfyUI and the models live on /workspace (the pod's disk), the Python environments
-# on the container disk. A new pod takes about 15 minutes: installs, then downloads
-# (~67GB); a restarted one reinstalls the environments, skips the rest, and is up in
-# a few minutes. Safe to rerun: interrupted downloads resume.
+# on the container disk. A new pod takes about 5 minutes on a fast data center (Oct
+# 28), mostly the ~67GB download; a restarted one reinstalls the environments, skips
+# the rest, and is up in a few minutes. Safe to rerun: interrupted downloads resume.
 #
 # Usage, on the pod from a checkout of this repo:
 #   bash deploy/runpod/setup.sh

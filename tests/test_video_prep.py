@@ -113,6 +113,27 @@ def test_added_sound_never_shortens_the_video(
     assert "Audio:" in probe.stderr
 
 
+def test_delayed_sound_starts_after_the_delay(
+    make_video: MakeVideo, tmp_path: Path
+) -> None:
+    video = make_video(96, 160, seconds=2, name="padded.mp4")
+    sound = make_video(96, 160, seconds=2, name="clip.mp4")
+    dest = tmp_path / "part.mp4"
+
+    video_prep.add_audio(video, sound, 0.0, dest, delay=0.5)
+
+    rate = 8000
+    pcm = subprocess.run(
+        [imageio_ffmpeg.get_ffmpeg_exe(), "-v", "error", "-i", str(dest), "-ac", "1"]
+        + ["-ar", str(rate), "-f", "s16le", "-"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    level = np.abs(np.frombuffer(pcm, np.int16).astype(int))
+    assert level[: int(0.45 * rate)].max() < 100  # the lead-in is silent
+    assert level[int(0.55 * rate) : int(1.5 * rate)].mean() > 1000  # then the tone
+
+
 def test_cut_keeps_the_frame_rate_exact(make_video: Callable[..., Path]) -> None:
     # The cut's last frame had no length, so its rate read 24.057 instead of 24
     # and ComfyUI wrote one mask frame too few (Oct 26).
@@ -125,16 +146,16 @@ def test_cut_keeps_the_frame_rate_exact(make_video: Callable[..., Path]) -> None
     assert (info.frames, info.fps) == (21, 30.0)
 
 
-def test_lead_in_plays_the_opening_backward_then_the_whole_clip(tmp_path: Path) -> None:
+def test_pad_plays_the_ends_backward_around_the_whole_clip(tmp_path: Path) -> None:
     ramp = np.stack([np.full((16, 16), 20 * index, np.uint8) for index in range(6)])
     video = tmp_path / "ramp.mp4"
     video_prep.write_video(ramp, 24, video)
 
-    video_prep.lead_in(video, 3, 24, tmp_path / "led.mp4")
+    video_prep.pad(video, 3, 2, 24, tmp_path / "padded.mp4")
 
     levels = [
         round(frame.mean() / 20)
-        for frame in video_prep.iter_frames(tmp_path / "led.mp4")
+        for frame in video_prep.iter_frames(tmp_path / "padded.mp4")
     ]
-    assert levels == [3, 2, 1, 0, 1, 2, 3, 4, 5]
-    assert levels == video_prep.lead_in_order(6, 3).tolist()  # the masks' order
+    assert levels == [3, 2, 1, 0, 1, 2, 3, 4, 5, 4, 3]
+    assert levels == video_prep.padded_order(6, 3, 2).tolist()  # the masks' order

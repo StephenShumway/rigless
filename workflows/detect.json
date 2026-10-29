@@ -1,0 +1,50 @@
+{
+  "sam": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "sam3.1_multiplex_fp16.safetensors"
+    }
+  },
+  "frame": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "frame.png"
+    }
+  },
+  "detect": {
+    "class_type": "SAM3_Detect",
+    "inputs": {
+      "model": [
+        "sam",
+        0
+      ],
+      "image": [
+        "frame",
+        0
+      ],
+      "positive_coords": "[{\"x\": 640, \"y\": 360}]",
+      "threshold": 0.5,
+      "refine_iterations": 2,
+      "individual_masks": false
+    }
+  },
+  "mask_image": {
+    "class_type": "MaskToImage",
+    "inputs": {
+      "mask": [
+        "detect",
+        0
+      ]
+    }
+  },
+  "save": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "mask_image",
+        0
+      ],
+      "filename_prefix": "rigless/select"
+    }
+  }
+}
