@@ -1637,6 +1637,7 @@ async function termsAgreed() {
   $(".terms-notice", dialog).replaceChildren(...paragraphs);
   $(".license-link", dialog).href = terms.license_url;
   $(".authorization-link", dialog).href = terms.authorization_url;
+  $(".report-link", dialog).href = `mailto:${terms.report_email}`;
   $("#terms-agree").checked = false;
   $("#terms-accept").disabled = true;
   dialog.returnValue = ""; // Esc keeps the last value, which may be an earlier "agree"
@@ -1645,18 +1646,6 @@ async function termsAgreed() {
   if (dialog.returnValue !== "agree") return false;
   await api("/api/terms", { method: "POST" });
   return true;
-}
-
-// The report line under Generate, once the address is set.
-async function showReportLink() {
-  try {
-    const terms = await api("/api/terms");
-    if (!terms.report_email) return;
-    $(".report-link").href = `mailto:${terms.report_email}`;
-    $(".powered .report").hidden = false;
-  } catch {
-    // Without the terms the line just stays hidden.
-  }
 }
 
 /* Status */
@@ -2564,7 +2553,6 @@ function init() {
   }, 1000);
   route();
   checkConnection();
-  showReportLink();
 }
 
 init();

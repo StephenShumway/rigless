@@ -1,6 +1,6 @@
 """The scorer must tell real good takes from real frozen ones.
 
-Uses the labeled takes in local_fixtures/takes/ (see HANDOFF.md): good_* takes
+Uses the labeled takes in local_fixtures/takes/ (not in the repo): good_* takes
 rendered with the full pose window and frozen_* takes rendered without it, plus
 the driving.mp4 they share. Skips when they're missing, as on a fresh clone.
 """
