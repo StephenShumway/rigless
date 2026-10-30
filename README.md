@@ -47,7 +47,7 @@ https://github.com/user-attachments/assets/d2343008-aa1e-4722-a5d2-c4b937d123fd
 all. It opens on a close-up, then the person turns and walks away into a crowd, and
 everyone around them stays as filmed.
 
-https://github.com/user-attachments/assets/c2dddcc5-4abe-4ce8-8398-c25c2faa11d1
+https://github.com/user-attachments/assets/c50f39f7-2e49-400a-a4a2-f6ff7f4c9f15
 
 **Seen from behind.** A 9 second runway dance, Full (768p), motion score 85.1, with
 this prompt: "@1 dances down the runway away from the camera, toward the crowd.
@@ -214,7 +214,7 @@ In a blind test it was preferred over v1.5 and over no swap LoRA (3 clips, one t
 judged by its developer). It is not measurably better at face identity. On the runway
 dance in [Examples](#examples), with the same seed and the same prompt, v1.5 turned the
 dancer toward the camera for about a second and the Rigless LoRA didn't (motion score
-77.4 against 85.1).
+77.4 against 85.1). [Watch the side-by-side](examples/lora-vs-v1.5.mp4).
 
 ### Compare with v1.5
 
