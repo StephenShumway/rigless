@@ -338,8 +338,6 @@ def create_app(root: Path) -> FastAPI:
             return projects.remove_picture(store, project_id, person, picture_id)
         except KeyError as exc:
             raise HTTPException(404, "No such picture.") from exc
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
 
     # Projects are returned as stored, not re-validated: one saved before a field
     # was added would otherwise fail to load.
@@ -419,6 +417,10 @@ def create_app(root: Path) -> FastAPI:
             whose = f" for person {number}" if len(people) > 1 else ""
             if not person["pictures"]:
                 raise HTTPException(400, f"Add the character{whose} first.")
+            if not (person["views"] or {}).get("front"):
+                raise HTTPException(
+                    400, f"Add a picture{whose} that shows the whole body, head to toe."
+                )
             if not person["anchors"]:
                 who = f"person {number}" if len(people) > 1 else "the person"
                 raise HTTPException(400, f"Tap {who} to replace first.")
@@ -449,14 +451,11 @@ def create_app(root: Path) -> FastAPI:
     def runpod_start(request: Request, body: PodStart) -> dict[str, Any]:
         key = _runpod_key(request)
         token = secrets.token_urlsafe(32)
-        env = {"PROXY_TOKEN": token}
-        if config.HF_TOKEN:
-            env["HF_TOKEN"] = config.HF_TOKEN
         # One Deploy at a time: a second click would otherwise see no pod yet and
         # start another, billed and forgotten.
         with deploying:
             try:
-                created = runpod.start(key, body.gpu, env)
+                created = runpod.start(key, body.gpu, {"PROXY_TOKEN": token})
             except runpod.RunPodError as exc:
                 raise _runpod_failed(exc) from exc
             config.save_pod(runpod.proxy_url(created["id"]), token)

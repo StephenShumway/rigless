@@ -1194,9 +1194,11 @@ def remove_picture(
 ) -> Project:
     """Takes one picture out of the ones H3 gets for a person, for good.
 
+    Taking out the last one leaves the person with no character, as if they
+    never had one, and clears the warnings about it.
+
     Raises:
         KeyError: The person has no such picture.
-        ValueError: It is the last picture of their character.
     """
 
     def change(project: Project) -> None:
@@ -1206,10 +1208,14 @@ def remove_picture(
         ]
         if len(kept) == len(theirs["pictures"]):
             raise KeyError(picture_id)
-        if not kept:
-            raise ValueError("Keep at least one picture of the character.")
         theirs["pictures"] = kept
-        theirs["removed_pictures"] = [*theirs["removed_pictures"], picture_id]
+        if kept:
+            theirs["removed_pictures"] = [*theirs["removed_pictures"], picture_id]
+        else:
+            theirs["sheet"] = []
+            theirs["views"] = None
+            theirs["removed_pictures"] = []
+            project["warnings"] = []
 
     return store.update(project_id, change)
 

@@ -37,6 +37,7 @@ FOUND = 0.5  # keypoint confidence; RTMPose guesses unseen points at up to ~0.45
 BACKDROP_DISTANCE = 30  # RGB distance from the backdrop color that counts as figure
 BACK = -0.25  # facing() below this is a back or three-quarter back view
 MARGIN = 0.04  # of the figure's height, kept around a crop
+NO_FRONT = "Add a picture that shows the whole body, head to toe, facing the camera."
 
 NOSE, LEFT_EYE, RIGHT_EYE = 0, 1, 2
 LEFT_SHOULDER, RIGHT_SHOULDER = 5, 6
@@ -73,14 +74,16 @@ class Views:
     """The views of a character, cut out of its images.
 
     Attributes:
-        front: The full-body view that faces the camera most squarely.
+        front: The full-body view that faces the camera most squarely, or None
+            if no view shows the whole body.
         close_up: The most frontal face close-up, or None if there is none.
         back: The full-body view from behind, or None if there is none.
-        warning: Advice about the front view's pose, or None.
+        warning: Advice about the front view's pose, NO_FRONT when there is no
+            front view, or None.
         others: Every other view, in the order found.
     """
 
-    front: Image.Image
+    front: Image.Image | None
     close_up: Image.Image | None
     back: Image.Image | None
     warning: str | None
@@ -107,11 +110,15 @@ def extract(images: list[Image.Image]) -> Views:
     """Picks and cuts out the views, pooled across a sheet or several images.
 
     Raises:
-        ValueError: No image shows the character's whole body.
+        ValueError: Nobody was found on the images.
     """
     found = [(image, find_views(image)) for image in images]
     owners = {view: (image, views) for image, views in found for view in views}
     pooled = [view for _, views in found for view in views]
+    if not pooled:
+        raise ValueError(
+            "Nobody was found in the pictures. Add pictures of the character."
+        )
 
     def cut(view: View | None) -> Image.Image | None:
         if view is None:
@@ -124,10 +131,10 @@ def extract(images: list[Image.Image]) -> Views:
     back = pick_back(pooled)
     picked = {view for view in (front, close_up, back) if view is not None}
     return Views(
-        crop(*owners[front], front),
+        cut(front),
         cut(close_up),
         cut(back),
-        pose_warning(front),
+        NO_FRONT if front is None else pose_warning(front),
         tuple(crop(*owners[view], view) for view in pooled if view not in picked),
     )
 
@@ -235,19 +242,10 @@ def face_score(keypoints: np.ndarray) -> float:
     return float(gap * max(0.0, 1 - off_center))
 
 
-def pick_front(views: list[View]) -> View:
-    """Returns the full-body view that faces the camera most squarely.
-
-    Raises:
-        ValueError: No view shows the whole body.
-    """
+def pick_front(views: list[View]) -> View | None:
+    """Returns the full-body view that faces the camera most squarely, if any."""
     full_body = [view for view in views if view.full_body]
-    if not full_body:
-        raise ValueError(
-            "No full-body view found. The sheet needs a head-to-toe view of the "
-            "character, facing the camera."
-        )
-    return max(full_body, key=lambda view: facing(view.keypoints))
+    return max(full_body, key=lambda view: facing(view.keypoints), default=None)
 
 
 def pick_back(views: list[View]) -> View | None:

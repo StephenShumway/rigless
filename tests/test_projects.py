@@ -45,7 +45,7 @@ def _renderable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Store,
     return store, project_id
 
 
-def test_footage_is_ready_for_taps_even_when_the_sheet_has_no_full_body_view(
+def test_footage_is_ready_for_taps_even_when_nobody_is_found_on_the_sheet(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(pose, "find_people", lambda image: [])  # nobody on the sheet
@@ -66,7 +66,7 @@ def test_footage_is_ready_for_taps_even_when_the_sheet_has_no_full_body_view(
 
     state = store.get(project_id)
     assert (state["status"], state["step"]) == ("waiting", "select")
-    assert any("full-body" in warning for warning in state["warnings"])
+    assert any("Nobody" in warning for warning in state["warnings"])
 
 
 def test_render_times_a_take_by_its_sampler_steps_only(

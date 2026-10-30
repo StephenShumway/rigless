@@ -132,6 +132,7 @@ def test_shoot_still_working_cannot_be_deleted(root: Path, client: TestClient) -
 
 
 def _ready(person: Person) -> None:
+    person["views"] = {"front": "views/a.png", "close_up": None, "back": None}
     person["pictures"] = [{"id": "a", "file": "views/a.png", "role": "front"}]
     person["anchors"] = [{"frame": 10, "positive": [[5, 5]], "negative": []}]
 
@@ -167,6 +168,22 @@ def test_render_names_the_added_person_who_has_no_character(
 
     assert response.status_code == 400
     assert "person 2" in response.json()["detail"]
+
+
+def test_render_asks_for_a_full_body_picture(root: Path, client: TestClient) -> None:
+    project_id = _ready_project(root)
+
+    def face_only(state: Project) -> None:
+        theirs = state["people"][0]
+        theirs["views"] = {"front": None, "close_up": "views/a.png", "back": None}
+        theirs["pictures"] = [{"id": "a", "file": "views/a.png", "role": "face"}]
+
+    Store(root).update(project_id, face_only)
+
+    response = client.post(f"/api/projects/{project_id}/render", json={"takes": 1})
+
+    assert response.status_code == 400
+    assert "whole body" in response.json()["detail"]
 
 
 def test_people_past_the_limit_are_refused(root: Path, client: TestClient) -> None:
@@ -397,7 +414,9 @@ def test_a_damaged_picture_is_refused_and_the_shoot_cleaned_up(
 
 
 @pytest.mark.usefixtures("one_view_per_image")
-def test_last_picture_cannot_be_removed(root: Path, client: TestClient) -> None:
+def test_removing_the_last_picture_leaves_the_person_without_a_character(
+    root: Path, client: TestClient
+) -> None:
     project_id = _swap_project(root)
     url = f"/api/projects/{project_id}"
     pictures = client.post(f"{url}/character", files=_pictures(RED, GREEN)).json()[
@@ -405,9 +424,27 @@ def test_last_picture_cannot_be_removed(root: Path, client: TestClient) -> None:
     ][0]["pictures"]
 
     client.delete(f"{url}/pictures/{pictures[0]['id']}")
-    response = client.delete(f"{url}/pictures/{pictures[1]['id']}")
+    person = client.delete(f"{url}/pictures/{pictures[1]['id']}").json()["people"][0]
 
-    assert response.status_code == 400
+    assert (person["sheet"], person["views"], person["pictures"]) == ([], None, [])
+
+
+@pytest.mark.usefixtures("one_view_per_image")
+def test_the_last_picture_removed_can_be_added_again(
+    root: Path, client: TestClient
+) -> None:
+    project_id = _swap_project(root)
+    url = f"/api/projects/{project_id}"
+    (picture,) = client.post(f"{url}/character", files=_pictures(RED)).json()["people"][
+        0
+    ]["pictures"]
+    client.delete(f"{url}/pictures/{picture['id']}")
+
+    after = client.post(
+        f"{url}/character", data={"append": "true"}, files=_pictures(RED)
+    ).json()["people"][0]["pictures"]
+
+    assert [each["id"] for each in after] == [picture["id"]]
 
 
 def test_shoot_saved_before_titles_and_posters_still_lists(

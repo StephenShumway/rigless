@@ -60,9 +60,28 @@ def test_profile_is_not_taken_for_the_back() -> None:
     assert sheet.pick_back(views) is None
 
 
-def test_sheet_without_full_body_view_is_rejected() -> None:
-    with pytest.raises(ValueError, match="full-body"):
-        sheet.pick_front([_close_up(0)])
+def test_a_face_close_up_alone_is_kept_with_a_warning_to_add_the_whole_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    photo = np.full((100, 60, 3), 180, np.uint8)
+    close_up = _close_up(0)
+    face = pose.Person(np.array([0, 0, 60, 100]), close_up.keypoints, close_up.scores)
+    monkeypatch.setattr(pose, "find_people", lambda image: [face])
+
+    views = sheet.extract([Image.fromarray(photo)])
+
+    assert views.front is None
+    assert views.close_up is not None
+    assert views.warning == sheet.NO_FRONT
+
+
+def test_pictures_with_nobody_in_them_are_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(pose, "find_people", lambda image: [])
+
+    with pytest.raises(ValueError, match="Nobody"):
+        sheet.extract([Image.new("RGB", (32, 32), "white")])
 
 
 def test_frontal_close_up_beats_a_turned_one() -> None:
@@ -180,7 +199,8 @@ def test_fixture_sheet_views_match_the_hand_crops() -> None:
         sheet.pick_back(views),
     )
 
-    # The hand crops from HANDOFF.md: whole figure, nothing of the neighbors.
+    # Measured by hand on the sheet: the whole figure, nothing of the neighbors.
+    assert front is not None
     assert _inside(front.box, (0, 0, 232, 604))
     assert front.box[3] - front.box[1] > 0.9 * 604
     assert close_up is not None
@@ -197,9 +217,10 @@ def test_clasped_hands_reference_is_warned() -> None:
     if not path.exists():
         pytest.skip("local_fixtures/character_solo.jpg is missing")
 
-    views = sheet.find_views(Image.open(path))
+    front = sheet.pick_front(sheet.find_views(Image.open(path)))
 
-    assert sheet.pose_warning(sheet.pick_front(views)) is not None
+    assert front is not None
+    assert sheet.pose_warning(front) is not None
 
 
 def test_a_phone_photo_is_turned_the_way_it_is_shown() -> None:
