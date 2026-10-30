@@ -61,6 +61,30 @@ def test_conformed_footage_has_the_trimmed_frame_count_and_fits_the_size(
     assert (info.width, info.height) == (360, 640)
 
 
+def test_conforming_uneven_frame_times_keeps_every_frame(tmp_path: Path) -> None:
+    # As in a screen recording: after the first frame, each sits 0.6 or 0.4 of a
+    # frame past the 24 fps grid, in turn, so rounding to the nearest slot puts
+    # pairs together.
+    clip = tmp_path / "uneven.mp4"
+    uneven = "if(eq(N,0),0,N+0.6-0.2*mod(N+1,2))/24/TB"
+    subprocess.run(
+        [
+            imageio_ffmpeg.get_ffmpeg_exe(), "-v", "error",
+            "-f", "lavfi", "-i", "testsrc2=size=64x64:rate=24:duration=3",
+            "-vf", f"settb=1/600,setpts='{uneven}'", "-fps_mode", "passthrough",
+            "-enc_time_base:v", "1/600", "-pix_fmt", "yuv420p", str(clip),
+        ],
+        check=True,
+    )  # fmt: skip
+    dest = tmp_path / "footage.mp4"
+
+    video_prep.conform(clip, dest, start=0.0, end=2.0, fps=24, max_side=64)
+
+    frames = video_prep.read_frames(dest).astype(np.int16)
+    changes = np.abs(np.diff(frames, axis=0)).mean(axis=(1, 2, 3))
+    assert (changes > 0.3).all()
+
+
 def test_extracted_frame_is_the_one_asked_for(tmp_path: Path) -> None:
     ramp = np.stack([np.full((16, 16), 10 * index, np.uint8) for index in range(12)])
     video = tmp_path / "ramp.mp4"

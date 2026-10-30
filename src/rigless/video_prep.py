@@ -127,9 +127,13 @@ def conform(
         f"scale=w='if(gte(iw,ih),{even.format(side='iw')},-2)'"
         f":h='if(gte(iw,ih),-2,{even.format(side='ih')})':flags=area"
     )
+    # Each frame fills the slot it falls in, not the nearest one: a screen
+    # recording shows frames late, and to the nearest slot a late frame and the
+    # next one can land together, one dropped and a gap filled by a repeat.
     _ffmpeg(
         "-v", "error", "-y", "-ss", str(start), "-i", str(src),
-        "-vf", f"fps={fps},{scale}", "-frames:v", str(round((end - start) * fps)),
+        "-vf", f"fps={fps}:round=down,{scale}",
+        "-frames:v", str(round((end - start) * fps)),
         "-t", str(end - start), "-c:v", "libx264", "-crf", "16",
         "-pix_fmt", "yuv420p", "-c:a", "aac", str(dest),
     )  # fmt: skip
