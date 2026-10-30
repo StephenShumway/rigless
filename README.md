@@ -38,6 +38,13 @@ challenge, as an open answer to Higgsfield's Genjutsu.
 
 ## Examples
 
+**Our LoRA vs. v1.5.** The same runway dance, seed and prompt, with only the swap LoRA
+changed. When the dancer spreads their arms from behind, akatz's v1.5 turns them toward
+the camera. The Rigless LoRA keeps their back to it (motion score 85.1 against 77.4).
+[Full side-by-side](examples/lora-vs-v1.5.mp4).
+
+<p align="center"><img src="examples/lora-vs-v1.5.gif" width="900" alt="Side by side on a runway: with the Rigless LoRA the dancer keeps their back to the camera, with v1.5 they turn to face it"></p>
+
 **Two people, one pass.** A 16 second clip, Full (768p), one take, motion score 89.8.
 The only prompt was "@2 has a monocle." Everything else came from the pictures.
 
