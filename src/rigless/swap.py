@@ -57,10 +57,11 @@ MAX_PICTURES = 9
 # the clip goes in led by its own first frames played backward, and those are
 # cut from the take; with 8, the turn happened inside them (Oct 27).
 LEAD_IN = 8
-# It does the same on the last frame: a school take that ends from behind faced the
-# camera on its final frame (Oct 28). So the clip is also followed by its last
-# frames played backward, cut likewise: one of H3's 4-frame latent groups.
-LEAD_OUT = 4
+# It does the same at the end: a take that ends from behind faced the camera on
+# its final frame (Oct 28), and with 4 frames cut, another turned in the frames
+# kept (Oct 29). So the clip is also followed by its last frames played
+# backward, cut likewise: two of H3's 4-frame latent groups.
+LEAD_OUT = 8
 # Every take says it's AI-made, in its metadata, as H3's license encourages.
 AI_LABEL = "AI-generated: the person was redrawn by MiniMax H3, with Rigless."
 
