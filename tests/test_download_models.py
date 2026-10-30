@@ -78,7 +78,7 @@ def test_progress_counts_the_models_already_on_disk(
     assert (state["done"], state["total"], state["from"]) == (7, 7, 3)
 
 
-def test_a_refused_private_download_names_hf_token_without_retrying(
+def test_a_refused_download_is_not_retried(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     script = _script()
@@ -93,7 +93,7 @@ def test_a_refused_private_download_names_hf_token_without_retrying(
 
     monkeypatch.setattr(urllib.request, "urlopen", refuse)
 
-    with pytest.raises(PermissionError, match="HF_TOKEN"):
+    with pytest.raises(PermissionError):
         script.fetch_all(tmp_path)
 
     assert calls == [url]

@@ -5,10 +5,9 @@ FL2V Turbo 8-step LoRA from lightx2v/Minimax-h3-Turbo, SAM 3.1 from
 Comfy-Org/sam3.1, Qwen3-VL-8B (the describer) from Comfy-Org/Qwen-Image-2.1,
 and the Rigless LoRA from its own repository. About 67GB in all. Files
 already present are skipped, and an interrupted download resumes, here (a few
-tries per file) or on the next run. HF_TOKEN in `.env` is sent to Hugging Face
-if set, for a private repository. With --progress, the bytes downloaded so far
-and in all are kept in a JSON file, which a new RunPod pod serves to the app
-while it sets up.
+tries per file) or on the next run. With --progress, the bytes downloaded so
+far and in all are kept in a JSON file, which a new RunPod pod serves to the
+app while it sets up.
 
 Typical usage example:
 
@@ -24,7 +23,7 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 
-from rigless import config, describe, selection, swap
+from rigless import describe, selection, swap
 
 H3 = "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main"
 TURBO = "https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/main"
@@ -61,26 +60,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def request(url: str, **headers: str) -> urllib.request.Request:
-    """Makes a request for url, with the Hugging Face token when there is one.
-
-    Hugging Face answers a download with a redirect to its file storage, whose
-    link is signed; the token stays off that and any other redirect.
-
-    Args:
-        url: The link to request.
-        **headers: More headers to send, such as Range.
-    """
-    made = urllib.request.Request(url, headers=headers)
-    if config.HF_TOKEN:
-        made.add_unredirected_header("Authorization", f"Bearer {config.HF_TOKEN}")
-    return made
-
-
 def check(url: str) -> None:
     """Prints whether a model's download link works, and its size."""
-    head = request(url)
-    head.method = "HEAD"
+    head = urllib.request.Request(url, method="HEAD")
     try:
         with urllib.request.urlopen(head) as response:
             size = int(response.headers.get("Content-Length", 0))
@@ -92,8 +74,7 @@ def check(url: str) -> None:
 
 def size(url: str) -> int:
     """Returns the size of a model's download in bytes, or 0 if the server won't say."""
-    head = request(url)
-    head.method = "HEAD"
+    head = urllib.request.Request(url, method="HEAD")
     try:
         with urllib.request.urlopen(head, timeout=TIMEOUT) as response:
             return int(response.headers.get("Content-Length", 0))
@@ -120,12 +101,14 @@ def download(
     start = part.stat().st_size if part.exists() else 0
     resume = {"Range": f"bytes={start}-"} if start else {}
     try:
-        response = urllib.request.urlopen(request(url, **resume), timeout=TIMEOUT)
+        response = urllib.request.urlopen(
+            urllib.request.Request(url, headers=resume), timeout=TIMEOUT
+        )
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):
             raise PermissionError(
-                f"Hugging Face refused {dest.name} (error {exc.code}). If its "
-                "repository is private, set HF_TOKEN to a token that can read it."
+                f"Hugging Face refused {dest.name} (error {exc.code}): its "
+                "repository is private, gated or gone."
             ) from exc
         raise
     with response:

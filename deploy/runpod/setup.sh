@@ -11,7 +11,7 @@
 #
 # Needs a GPU with 48GB or more, a driver for CUDA 13 (comfy-kitchen's fast int8
 # kernels need it), the pod environment variable PROXY_TOKEN, and port 8189 exposed
-# over HTTP. HF_TOKEN, if set, downloads the Rigless LoRA from a private repo.
+# over HTTP.
 set -euo pipefail
 
 # RunPod writes pod environment variables here; SSH sessions don't inherit them.

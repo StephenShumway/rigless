@@ -2,9 +2,9 @@
 
 Deploy makes a pod wherever RunPod has the chosen GPU free, with a 100GB disk for
 ComfyUI and the models (its environments go on the container disk, which a pause
-clears). The pod fetches the latest code, runs
-the setup (`deploy/runpod/setup.sh`, mostly downloads, reporting its progress on
-port 8189), and then serves ComfyUI behind comfy-api-proxy on that port. Pausing
+clears). The pod fetches the code of a release (RELEASE), runs the setup
+(`deploy/runpod/setup.sh`, mostly downloads, reporting its progress on port
+8189), and then serves ComfyUI behind comfy-api-proxy on that port. Pausing
 releases the GPU and keeps the disk (billed while paused) to resume in minutes.
 Deleting removes both, so nothing is billed afterwards.
 
@@ -54,17 +54,21 @@ DOWNLOAD_SPEED = (
 # any 13.x will do, and RunPod's H100s run 13.2 (Oct 26).
 MIN_CUDA = "13.0"
 IMAGE = "runpod/base:1.4.1-ubuntu2404"
-CODE = "https://github.com/StephenShumway/rigless/archive/refs/heads/main.tar.gz"
+# The release new pods set up from. Its tag must be on GitHub before a Deploy.
+RELEASE = "v0.1.0"
+CODE = f"https://github.com/StephenShumway/rigless/archive/refs/tags/{RELEASE}.tar.gz"
+FOLDER = f"rigless-{RELEASE.removeprefix('v')}"  # GitHub drops the tag's "v" here
 
 # Runs as the pod's start command: fetch the code and set up in the background,
 # then hand over to the image's own start script (SSH, then sleep). If the code
-# can't be fetched, a copy already on the disk (a restarted pod) sets up instead.
-# One line without single quotes, since RunPod takes it as `bash -c '...'`.
+# can't be fetched, the release's copy already on the disk (a restarted pod) sets
+# up instead. One line without single quotes, since RunPod takes it as
+# `bash -c '...'`.
 BOOT = (
     "mkdir -p /workspace/logs; (cd /workspace; "
     f"if curl -fsSL {CODE} | tar xz -C /tmp; "
-    "then rm -rf rigless-main && mv /tmp/rigless-main .; fi; "
-    "bash rigless-main/deploy/runpod/setup.sh) > /workspace/logs/setup.log 2>&1 & "
+    f"then rm -rf {FOLDER} && mv /tmp/{FOLDER} .; fi; "
+    f"bash {FOLDER}/deploy/runpod/setup.sh) > /workspace/logs/setup.log 2>&1 & "
     "exec /start.sh"
 )
 
