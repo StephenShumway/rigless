@@ -47,7 +47,7 @@ https://github.com/user-attachments/assets/d2343008-aa1e-4722-a5d2-c4b937d123fd
 all. It opens on a close-up, then the person turns and walks away into a crowd, and
 everyone around them stays as filmed.
 
-https://github.com/user-attachments/assets/c50f39f7-2e49-400a-a4a2-f6ff7f4c9f15
+https://github.com/user-attachments/assets/0736a051-c4dd-43d9-9acb-de7f73bae9a1
 
 **Seen from behind.** A 9 second runway dance, Full (768p), motion score 85.1, with
 this prompt: "@1 dances down the runway away from the camera, toward the crowd.
@@ -57,7 +57,7 @@ face. When they spread their arms wide, they still face the crowd, away from the
 camera." Without it, 2 of 3 takes turned the dancer toward the camera for about a
 second when the arms spread wide. With it, both seeds tried held.
 
-https://github.com/user-attachments/assets/0736a051-c4dd-43d9-9acb-de7f73bae9a1
+https://github.com/user-attachments/assets/c50f39f7-2e49-400a-a4a2-f6ff7f4c9f15
 
 ## Using it
 
