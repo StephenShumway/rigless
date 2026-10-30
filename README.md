@@ -41,10 +41,24 @@ challenge, as an open answer to Higgsfield's Genjutsu.
 **Two people, one pass.** A 16 second clip, Full (768p), one take, motion score 89.8.
 The only prompt was "@2 has a monocle." Everything else came from the pictures.
 
-<!-- Drag examples/orange-two-people.mp4 here in GitHub's editor so it plays inline. -->
+<!-- 
+https://github.com/user-attachments/assets/d2343008-aa1e-4722-a5d2-c4b937d123fd
+
+
+https://github.com/user-attachments/assets/c2dddcc5-4abe-4ce8-8398-c25c2faa11d1
+
+
+
+https://github.com/user-attachments/assets/0736a051-c4dd-43d9-9acb-de7f73bae9a1
+
+/orange-two-people.mp4 here in GitHub's editor so it plays inline. -->
 
 **Into the crowd.** A 20 second clip, Full (768p), motion score 84.2, with no prompt at
-all. It opens on a close-up, then the person turns and walks away into a crowd, and
+all. It opens on a close-up, then the person
+
+https://github.com/user-attachments/assets/c50f39f7-2e49-400a-a4a2-f6ff7f4c9f15
+
+ turns and walks away into a crowd, and
 everyone around them stays as filmed.
 
 <!-- Drag examples/school-crowd.mp4 here in GitHub's editor so it plays inline. -->
