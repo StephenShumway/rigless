@@ -55,7 +55,7 @@ DOWNLOAD_SPEED = (
 MIN_CUDA = "13.0"
 IMAGE = "runpod/base:1.4.1-ubuntu2404"
 # The release new pods set up from. Its tag must be on GitHub before a Deploy.
-RELEASE = "v0.1.0"
+RELEASE = "v0.1.1"
 CODE = f"https://github.com/StephenShumway/rigless/archive/refs/tags/{RELEASE}.tar.gz"
 FOLDER = f"rigless-{RELEASE.removeprefix('v')}"  # GitHub drops the tag's "v" here
 

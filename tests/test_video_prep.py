@@ -183,3 +183,18 @@ def test_pad_plays_the_ends_backward_around_the_whole_clip(tmp_path: Path) -> No
     ]
     assert levels == [3, 2, 1, 0, 1, 2, 3, 4, 5, 4, 3]
     assert levels == video_prep.padded_order(6, 3, 2).tolist()  # the masks' order
+
+
+def test_pad_can_lead_in_with_a_still_instead_of_the_opening(tmp_path: Path) -> None:
+    ramp = np.stack([np.full((16, 16), 20 * index, np.uint8) for index in range(6)])
+    video = tmp_path / "ramp.mp4"
+    video_prep.write_video(ramp, 24, video)
+    still = np.full((16, 16, 3), 200, np.uint8)
+
+    video_prep.pad(video, 3, 2, 24, tmp_path / "padded.mp4", lead_in=still)
+
+    levels = [
+        round(frame.mean() / 20)
+        for frame in video_prep.iter_frames(tmp_path / "padded.mp4")
+    ]
+    assert levels == [10, 10, 10, 0, 1, 2, 3, 4, 5, 4, 3]

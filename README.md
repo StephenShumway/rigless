@@ -169,7 +169,9 @@ only sensible on a private network. Restart Rigless and it renders there, shown 
    hair and clothes. It works in overlapping windows, with the clip as `<Video 1>` and
    the pictures as `<Picture 1>` to `<Picture N>`. Outside the masks, H3 keeps the clip's
    own latents. It runs with an 8-step Turbo LoRA and the Rigless LoRA. It also hears the
-   clip's sound, so mouths move with the song or speech.
+   clip's sound, so mouths move with the song or speech. With one person, the clip goes
+   in led by a third of a second of `<Picture 1>`, cut from the take afterward, so H3's
+   first window starts from the character rather than the performer.
 5. **Finishing.** The take gets the clip's own sound back, and its metadata marks it as
    AI-generated.
 6. **Scoring.** RTMPose finds the performer's pose in the clip and the character's pose

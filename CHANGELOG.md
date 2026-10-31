@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.1] - 2026-10-30
+
+### Changed
+
+- With one person, the clip now goes into H3 led by the character's `<Picture 1>` as it
+  is, for 8 frames (a third of a second) cut from the take afterward. Before, it led
+  with the clip's own opening played backward. H3's first window has nothing earlier to
+  go on. On a clip that opens with the head out of frame, it drew the character's head
+  into the first 2 seconds and could copy the performer's costume. With the picture
+  first, the head stayed out on all 3 seeds tested, and the costume came out the
+  character's own on 2 of them. On the README's runway dance nothing changed: the same
+  motion score and no turns toward the camera. Clips with several people keep the old
+  lead-in.
+- New pods set up from the `v0.1.1` tag. Nothing changed on the pod, so pods set up
+  from `v0.1.0` keep working as they are.
+
 ## [0.1.0] - 2026-10-29
 
 The first release.
@@ -46,4 +62,5 @@ The first release.
   Python environments on its container disk, and ComfyUI behind a token-protected
   proxy. `scripts/download_models.py` fetches the models on any machine.
 
+[0.1.1]: https://github.com/StephenShumway/rigless/releases/tag/v0.1.1
 [0.1.0]: https://github.com/StephenShumway/rigless/releases/tag/v0.1.0

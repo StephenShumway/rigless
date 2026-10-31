@@ -1,5 +1,8 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
+from PIL import Image
 
 from rigless import swap
 
@@ -105,3 +108,20 @@ def test_tags_in_the_notes_point_at_each_persons_first_picture() -> None:
         "the person in <Picture 3> hands the person in <Picture 1> the mic; @3 is "
         "nobody."
     )
+
+
+def test_lead_in_fits_the_whole_figure_into_a_wide_frame(tmp_path: Path) -> None:
+    picture = np.full((200, 100, 3), 128, np.uint8)  # a gray backdrop
+    picture[40:180, 30:70] = (20, 40, 200)  # the figure, head to toe
+    path = tmp_path / "front.png"
+    Image.fromarray(picture).save(path)
+
+    frame, mask = swap.lead_in_frame(path, (320, 100))
+
+    # Halved to fit the height: 50 px wide, centered at x 135-185, figure at
+    # x 150-170 and y 20-90.
+    assert frame.shape == (100, 320, 3)
+    assert frame[55, 160].tolist() == [200, 40, 20]  # BGR, like the clip's frames
+    assert frame[50, 5].tolist() == [128, 128, 128]  # the backdrop fills the sides
+    assert mask[20:90, 150:170].all()
+    assert not mask[:, :100].any() and not mask[:, 220:].any()

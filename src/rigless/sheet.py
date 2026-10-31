@@ -174,7 +174,7 @@ def foreground(image: np.ndarray) -> np.ndarray:
     Args:
         image: An HxWx3 RGB image whose border is mostly backdrop.
     """
-    distance = np.linalg.norm(image.astype(np.float32) - _backdrop(image), axis=2)
+    distance = np.linalg.norm(image.astype(np.float32) - backdrop(image), axis=2)
     mask = (distance > BACKDROP_DISTANCE).astype(np.uint8)
     # Opening drops the JPEG speckle that hovers around the threshold.
     return cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8)) > 0
@@ -296,7 +296,7 @@ def crop(sheet: Image.Image, views: list[View], view: View) -> Image.Image:
             others |= other.mask
     # Widened so their soft, below-threshold edges go too.
     widened = cv2.dilate(others, np.ones((7, 7), np.uint8)) > 0
-    image[widened & ~view.mask] = _backdrop(image)
+    image[widened & ~view.mask] = backdrop(image)
 
     left, top, right, bottom = view.box
     pad = round(MARGIN * (bottom - top))
@@ -311,7 +311,7 @@ def crop(sheet: Image.Image, views: list[View], view: View) -> Image.Image:
     )
 
 
-def _backdrop(image: np.ndarray) -> np.ndarray:
+def backdrop(image: np.ndarray) -> np.ndarray:
     """Returns the backdrop's color: the median of the image's outermost pixels."""
     border = np.concatenate([image[0], image[-1], image[:, 0], image[:, -1]])
     return np.median(border, axis=0)

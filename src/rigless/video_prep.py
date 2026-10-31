@@ -224,7 +224,14 @@ def padded_order(length: int, head: int, tail: int) -> np.ndarray:
     ]
 
 
-def pad(clip: Path, head: int, tail: int, fps: float, dest: Path) -> None:
+def pad(
+    clip: Path,
+    head: int,
+    tail: int,
+    fps: float,
+    dest: Path,
+    lead_in: np.ndarray | None = None,
+) -> None:
     """Writes a clip between its own ends played backward, without its audio.
 
     The result starts on frame `head`, plays back to frame 1, plays the whole
@@ -237,6 +244,8 @@ def pad(clip: Path, head: int, tail: int, fps: float, dest: Path) -> None:
         tail: How many frames lead out; at most the clip's length minus one.
         fps: The clip's frame rate.
         dest: Where to write the .mp4.
+        lead_in: An HxWx3 BGR frame the clip's size, shown for the `head` frames
+            in place of the clip's opening played backward.
 
     Raises:
         RuntimeError: ffmpeg failed.
@@ -246,7 +255,10 @@ def pad(clip: Path, head: int, tail: int, fps: float, dest: Path) -> None:
     def played() -> Iterator[np.ndarray]:
         source = iter_frames(clip)
         opening = list(itertools.islice(source, head + 1))
-        yield from opening[head:0:-1]
+        if lead_in is None:
+            yield from opening[head:0:-1]
+        else:
+            yield from itertools.repeat(lead_in, head)
         ending = collections.deque(opening, maxlen=tail + 1)
         yield from opening
         for frame in source:

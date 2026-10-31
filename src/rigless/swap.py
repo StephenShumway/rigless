@@ -28,10 +28,12 @@ from functools import partial, reduce
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 from comfy_sdk import Asset, Progress
+from PIL import Image
 
-from rigless import comfy_client, pose, video_prep
+from rigless import comfy_client, pose, sheet, video_prep
 from rigless.comfy_client import Graph
 from rigless.score import TakeScore, score_take
 
@@ -57,6 +59,14 @@ MAX_PICTURES = 9
 # the clip goes in led by its own first frames played backward, and those are
 # cut from the take; with 8, the turn happened inside them (Oct 27).
 LEAD_IN = 8
+# With one person, the lead-in shows their <Picture 1> instead, as it is. H3's
+# first window has no earlier window to go on: on a clip that opens on a body
+# cut off at the neck, it drew the character's head in and copied the
+# performer's tutu. Shown the character first, it kept the head out on all 3
+# seeds tried and the costume clean on 2, and changed nothing on a runway dance
+# (Oct 30). The picture composited into the clip's scene made it copy the
+# performer's whole costume instead.
+FIGURE_MARGIN = 15  # px the lead-in figure's mask grows by, as tested
 # It does the same at the end: a take that ends from behind faced the camera on
 # its final frame (Oct 28), and with 4 frames cut, another turned in the frames
 # kept (Oct 29). So the clip is also followed by its last frames played
@@ -501,6 +511,7 @@ def render_takes(
 ) -> Iterator[Take]:
     """Renders and scores one swap take per seed, yielding each when it's done.
 
+    With one person, the lead-in shows their <Picture 1> (see lead_in_frame).
     Each take's folder holds h3.mp4 (H3's render, with the lead-in and
     lead-out), result.mp4 (the same frames as part, scored), finished.mp4
     (result.mp4 with the clip's sound: the one to show), and run.json. A take
@@ -538,12 +549,14 @@ def render_takes(
     frames = len(found)
     lead = min(LEAD_IN, frames - 1)
     tail = min(LEAD_OUT, frames - 1)
-    led = video_prep.padded_order(frames, lead, tail)  # the masks in part.mp4's order
-    video_prep.write_video(
-        found[led].astype(np.uint8) * 255, FPS, out_dir / "masks.mp4"
-    )
+    led_masks = found[video_prep.padded_order(frames, lead, tail)]
+    opening = None
+    if len(people) == 1 and lead:
+        opening, figure = lead_in_frame(pictures[0], (found.shape[2], found.shape[1]))
+        led_masks[:lead] = figure
+    video_prep.write_video(led_masks.astype(np.uint8) * 255, FPS, out_dir / "masks.mp4")
     padded = out_dir / "padded.mp4"
-    video_prep.pad(part, lead, tail, FPS, padded)
+    video_prep.pad(part, lead, tail, FPS, padded, lead_in=opening)
     if sound:  # in time with the clip, after the lead-in
         video_prep.add_audio(padded, *sound, out_dir / "part.mp4", delay=lead / FPS)
     else:
@@ -607,6 +620,51 @@ def render_takes(
             }
             (take_dir / "run.json").write_text(json.dumps(record, indent=2), "utf-8")
             yield Take(seed, take_dir, error, take_score)
+
+
+def lead_in_frame(
+    picture: Path, size: tuple[int, int]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fits a character's picture whole into a frame of the clip, for the lead-in.
+
+    The picture keeps its own backdrop and is scaled to fit inside the frame,
+    centered, with the backdrop's color filling the rest, so no part of the
+    figure is cropped.
+
+    Args:
+        picture: The picture.
+        size: The frame's (width, height).
+
+    Returns:
+        A tuple (frame, mask), where frame is the HxWx3 BGR frame and mask is
+        HxW bools marking the figure, grown by FIGURE_MARGIN.
+    """
+    with Image.open(picture) as image:
+        rgb = np.asarray(image.convert("RGB"))
+    width, height = size
+    scale = min(width / rgb.shape[1], height / rgb.shape[0])
+    fitted = cv2.resize(
+        rgb,
+        (round(rgb.shape[1] * scale), round(rgb.shape[0] * scale)),
+        interpolation=cv2.INTER_AREA,
+    )
+    frame = np.empty((height, width, 3), np.uint8)
+    frame[:] = sheet.backdrop(rgb)
+    top, left = (height - fitted.shape[0]) // 2, (width - fitted.shape[1]) // 2
+    frame[top : top + fitted.shape[0], left : left + fitted.shape[1]] = fitted
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(
+        sheet.foreground(frame).astype(np.uint8)
+    )
+    if count > 1:
+        figure = labels == 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+    else:  # nothing stands out from the backdrop: redraw the whole picture
+        figure = np.zeros((height, width), bool)
+        figure[top : top + fitted.shape[0], left : left + fitted.shape[1]] = True
+    grow = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (2 * FIGURE_MARGIN + 1, 2 * FIGURE_MARGIN + 1)
+    )
+    mask = cv2.dilate(figure.astype(np.uint8), grow) > 0
+    return np.ascontiguousarray(frame[..., ::-1]), mask
 
 
 def _score(
